@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, TextInput, TouchableOpacity, Text, Alert } from "react-native";
+import { View, TextInput, Pressable, Text, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../lib/firebaseConfig";
@@ -23,11 +23,11 @@ export default function Login() {
 
   return (
     <View style={{ flex: 1, justifyContent: "center", padding: 20, gap: 12 }}>
-      <TextInput value={name} onChangeText={setName} placeholder="Name" style={{ borderWidth: 1, padding: 12 }} />
-      <TextInput value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry style={{ borderWidth: 1, padding: 12 }} />
-      <TouchableOpacity onPress={handleLogin} style={{ borderWidth: 1, padding: 12, alignItems: "center" }}>
+      <TextInput value={name} onChangeText={setName} placeholder="Name" style={{ borderWidth: 1, padding: 12, borderRadius: 10 }} />
+      <TextInput value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry style={{ borderWidth: 1, padding: 12, borderRadius: 10 }} />
+      <Pressable onPress={handleLogin} style={{ borderWidth: 1, padding: 12, alignItems: "center", borderRadius: 10 }}>
         <Text>Login</Text>
-      </TouchableOpacity>
+      </Pressable>
     </View>
   );
 }
