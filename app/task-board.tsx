@@ -270,16 +270,30 @@ function TaskCard({
           height: e.nativeEvent.layout.height,
         })
       }
-      className={`rounded-2xl border border-slate-200 bg-white p-4 ${isDragging ? "opacity-25" : ""}`}
-      style={{ gap: 10 }}
+      className={`rounded-[22px] border border-slate-200 bg-white p-4 ${
+        isDragging ? "opacity-25" : ""
+      }`}
+      style={{
+        gap: 12,
+        shadowColor: "#0f172a",
+        shadowOpacity: 0.06,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 8 },
+        elevation: 2,
+      }}
     >
       <View className="flex-row items-start justify-between gap-2">
-        <View className="flex-1" style={{ gap: 4 }}>
-          <Text className="text-base font-extrabold text-slate-900">{task.title}</Text>
+        <View className="flex-1" style={{ gap: 6 }}>
+          <Text className="text-[16px] font-extrabold leading-5 text-slate-900">
+            {task.title}
+          </Text>
+
           {showGroupMeta ? (
-            <Text className="text-xs font-bold text-slate-500">
-              {task.groupName || "Group"}
-            </Text>
+            <View className="self-start rounded-full bg-slate-100 px-2.5 py-1">
+              <Text className="text-[11px] font-bold text-slate-500">
+                {task.groupName || "Group"}
+              </Text>
+            </View>
           ) : null}
         </View>
 
@@ -287,44 +301,60 @@ function TaskCard({
           <Pressable
             onPressIn={blockOpenBriefly}
             onPress={() => onDelete(task.id)}
-            className="h-[30px] w-[30px] items-center justify-center rounded-full bg-slate-100"
+            className="h-8 w-8 items-center justify-center rounded-full bg-red-50"
           >
-            <Ionicons name="trash-outline" size={18} color="#991B1B" />
+            <Ionicons name="trash-outline" size={18} color="#b91c1c" />
           </Pressable>
         ) : null}
       </View>
 
-      <Text className="text-[13px] leading-[18px] text-slate-600">{descriptionText}</Text>
-
-      {checklistTotal > 0 ? (
-        <Text className="text-xs font-bold text-slate-500">
-          Checklist {checklistDone}/{checklistTotal}
-        </Text>
-      ) : null}
+      <Text className="text-[13px] leading-[19px] text-slate-600">{descriptionText}</Text>
 
       {task.checklist.length > 0 ? (
-        <View style={{ gap: 8 }}>
+        <View style={{ gap: 10 }}>
+          <View className="flex-row items-center justify-between">
+            <View className="rounded-full bg-slate-100 px-2.5 py-1">
+              <Text className="text-[11px] font-bold text-slate-600">
+                Checklist {checklistDone}/{checklistTotal}
+              </Text>
+            </View>
+
+            {task.deadline ? (
+              <View className="rounded-full bg-amber-50 px-2.5 py-1">
+                <Text className="text-[11px] font-bold text-amber-700">Due {task.deadline}</Text>
+              </View>
+            ) : (
+              <View className="rounded-full bg-slate-100 px-2.5 py-1">
+                <Text className="text-[11px] font-bold text-slate-500">No deadline</Text>
+              </View>
+            )}
+          </View>
+
           {task.checklist.map((item, index) => (
             <Pressable
               key={`${task.id}-check-${index}`}
               onPressIn={blockOpenBriefly}
               onPress={() => onToggleChecklist(task.id, index, !item.done)}
-              className="flex-row items-center py-1"
+              className="flex-row items-center rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3"
               style={({ pressed }) => [
-                pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
-                { gap: 8 },
+                pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
               ]}
             >
               <View
-                className={`h-5 w-5 items-center justify-center rounded-md border bg-white ${
-                  item.done ? "border-slate-900 bg-slate-900" : "border-slate-400"
+                className={`mr-3 h-6 w-6 items-center justify-center rounded-full border-2 ${
+                  item.done
+                    ? "border-slate-900 bg-slate-900"
+                    : "border-slate-300 bg-white"
                 }`}
               >
-                {item.done ? <Text className="text-[13px] font-extrabold text-white">✓</Text> : null}
+                {item.done ? (
+                  <Ionicons name="checkmark" size={15} color="#FFFFFF" />
+                ) : null}
               </View>
+
               <Text
-                className={`flex-1 text-[13px] font-semibold ${
-                  item.done ? "text-slate-500 line-through" : "text-slate-900"
+                className={`flex-1 text-[13px] leading-[18px] ${
+                  item.done ? "text-slate-400 line-through" : "text-slate-900"
                 }`}
               >
                 {item.text}
@@ -332,20 +362,38 @@ function TaskCard({
             </Pressable>
           ))}
         </View>
-      ) : null}
+      ) : (
+        <View className="flex-row items-center justify-between">
+          <View className="rounded-full bg-slate-100 px-2.5 py-1">
+            <Text className="text-[11px] font-bold text-slate-600">
+              Checklist {checklistDone}/{checklistTotal}
+            </Text>
+          </View>
+
+          {task.deadline ? (
+            <View className="rounded-full bg-amber-50 px-2.5 py-1">
+              <Text className="text-[11px] font-bold text-amber-700">Due {task.deadline}</Text>
+            </View>
+          ) : (
+            <View className="rounded-full bg-slate-100 px-2.5 py-1">
+              <Text className="text-[11px] font-bold text-slate-500">No deadline</Text>
+            </View>
+          )}
+        </View>
+      )}
 
       {task.assignedMemberNames.length > 0 ? (
         <View className="flex-row flex-wrap items-center" style={{ gap: 6 }}>
           {task.assignedMemberNames.slice(0, 3).map((name, index) => (
             <View
               key={`${name}-${index}`}
-              className="flex-row items-center rounded-full bg-slate-200 px-3 py-1.5"
+              className="flex-row items-center rounded-full bg-slate-100 px-3 py-1.5"
               style={{ gap: 6 }}
             >
-              <View className="h-[18px] w-[18px] items-center justify-center rounded-full bg-slate-100">
-                <Ionicons name="person" size={12} color="#6B7280" />
+              <View className="h-[18px] w-[18px] items-center justify-center rounded-full bg-white">
+                <Ionicons name="person" size={12} color="#64748b" />
               </View>
-              <Text className="text-xs font-bold text-slate-900">{name}</Text>
+              <Text className="text-xs font-bold text-slate-800">{name}</Text>
             </View>
           ))}
           {task.assignedMemberNames.length > 3 ? (
@@ -355,18 +403,17 @@ function TaskCard({
           ) : null}
         </View>
       ) : null}
-
-      <View style={{ gap: 2 }}>
-        <Text className="text-xs font-extrabold text-slate-900">Deadline:</Text>
-        <Text className="text-xs font-bold text-slate-500">
-          {task.deadline || "No deadline"}
-        </Text>
-      </View>
     </Animated.View>
   );
 }
 
-export default function TaskBoard({ userId, userRole, memberName, targetMemberId, targetMemberName }: TaskBoardProps) {
+export default function TaskBoard({
+  userId,
+  userRole,
+  memberName,
+  targetMemberId,
+  targetMemberName,
+}: TaskBoardProps) {
   const params = useLocalSearchParams<{
     groupId?: string;
     groupName?: string;
@@ -385,7 +432,9 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
 
   const currentUserId = String(userId ?? params.id ?? "");
   const currentMemberId = String(targetMemberId ?? params.memberId ?? params.id ?? "");
-  const currentMemberName = String(targetMemberName ?? params.memberName ?? params.name ?? memberName ?? "Member");
+  const currentMemberName = String(
+    targetMemberName ?? params.memberName ?? params.name ?? memberName ?? "Member"
+  );
   const initialRole = String(userRole ?? params.userRole ?? "");
 
   const hasGroupContext = !!currentGroupId && !!currentGroupName;
@@ -577,7 +626,16 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
     } finally {
       setLoading(false);
     }
-  }, [currentGroupId, currentGroupName, currentGroupKind, currentMemberId, currentUserId, groupCollectionName, hasGroupContext, hasMemberContext]);
+  }, [
+    currentGroupId,
+    currentGroupName,
+    currentGroupKind,
+    currentMemberId,
+    currentUserId,
+    groupCollectionName,
+    hasGroupContext,
+    hasMemberContext,
+  ]);
 
   useFocusEffect(
     useCallback(() => {
@@ -617,13 +675,17 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
     return map;
   }, [tasks]);
 
+  const todoCount = groupedTasks.todo.length;
+  const doingCount = groupedTasks.doing.length;
+  const doneCount = groupedTasks.done.length;
+
   const resetTaskForm = () => {
     setEditingTaskId(null);
     setTaskTitle("");
     setTaskDescription("");
     setTaskChecklist([{ text: "", done: false }]);
     setSelectedStatus("todo");
-    setSelectedMemberIds([]);
+    setSelectedMemberIds(hasMemberContext ? [currentMemberId] : []);
     setShowMemberDropdown(false);
     setDeadline(new Date());
     setShowDatePicker(false);
@@ -631,9 +693,12 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
 
   const openNewTaskModal = (status: TaskStatus = "todo") => {
     if (!canManageTasks) return;
-    if (!hasGroupContext) return;
+    if (!hasGroupContext && !hasMemberContext) return;
     resetTaskForm();
     setSelectedStatus(status);
+    if (hasMemberContext && currentMemberId) {
+      setSelectedMemberIds([currentMemberId]);
+    }
     setShowTaskModal(true);
   };
 
@@ -710,12 +775,12 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
 
   const saveTask = async () => {
     if (!canManageTasks) return;
-    if (!hasGroupContext) return;
+    if (!hasGroupContext && !hasMemberContext) return;
 
     const title = taskTitle.trim();
     const description = taskDescription.trim() || "No description provided";
 
-    if (!currentGroupId || !currentGroupName) {
+    if (hasGroupContext && (!currentGroupId || !currentGroupName)) {
       return Alert.alert("Error", "Missing group information");
     }
 
@@ -730,23 +795,30 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
       }))
       .filter((item) => item.text.length > 0);
 
-    const memberNames = selectedMemberIds
+    const activeMemberIds =
+      selectedMemberIds.length > 0
+        ? selectedMemberIds
+        : hasMemberContext && currentMemberId
+          ? [currentMemberId]
+          : [];
+
+    const memberNames = activeMemberIds
       .map((id) => users.find((u) => u.id === id)?.name)
       .filter((name): name is string => Boolean(name));
 
     setSaving(true);
     try {
       const payload = {
-        groupId: currentGroupId,
-        groupName: currentGroupName,
-        groupKind: currentGroupKind,
+        groupId: hasGroupContext ? currentGroupId : "",
+        groupName: hasGroupContext ? currentGroupName : "",
+        groupKind: hasGroupContext ? currentGroupKind : "",
         title,
         description,
         checklist: cleanChecklist,
         status: selectedStatus,
         deadline: deadline.toISOString().slice(0, 10),
         deadlineAt: Timestamp.fromDate(deadline),
-        assignedMemberIds: selectedMemberIds,
+        assignedMemberIds: activeMemberIds,
         assignedMemberNames: memberNames,
         updatedAt: Timestamp.now(),
       };
@@ -872,40 +944,26 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
       );
     })();
 
+    const count = status === "todo" ? todoCount : status === "doing" ? doingCount : doneCount;
+
     return (
       <View
         ref={ref}
         collapsable={false}
         onLayout={measureColumns}
-        className={`w-[300px] rounded-[20px] p-3 min-h-[500px] bg-slate-100 ${
-          isDropTarget ? "border-2 border-slate-900" : ""
+        className={`w-[300px] min-h-[500px] rounded-[24px] border p-3 ${
+          isDropTarget ? "border-slate-900 bg-slate-100" : "border-slate-200 bg-slate-100/80"
         }`}
       >
         <View className="mb-3 flex-row items-center justify-between">
-          <View>
-            <Text className="text-lg font-extrabold text-slate-900">
+          <View className="flex-row items-center" style={{ gap: 8 }}>
+            <Text className="text-[18px] font-black text-slate-900">
               {status === "todo" ? "To Do" : status === "doing" ? "Doing" : "Done"}
             </Text>
-            <Text className="mt-0.5 text-xs font-semibold text-slate-500">
-              {status === "todo"
-                ? "Backlog"
-                : status === "doing"
-                  ? "In progress"
-                  : "Completed"}
-            </Text>
+            <View className="rounded-full bg-slate-900 px-2.5 py-1">
+              <Text className="text-[11px] font-bold text-white">{count}</Text>
+            </View>
           </View>
-
-          {canManageTasks && hasGroupContext ? (
-            <Pressable
-              onPress={() => openNewTaskModal(status)}
-              className="h-[34px] w-[34px] items-center justify-center rounded-full border border-slate-200 bg-white"
-              style={({ pressed }) =>
-                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-              }
-            >
-              <Ionicons name="add" size={18} color="#111827" />
-            </Pressable>
-          ) : null}
         </View>
 
         <ScrollView
@@ -914,8 +972,11 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
           contentContainerStyle={{ gap: 12 }}
         >
           {data.length === 0 ? (
-            <View className="items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-5">
-              <Text className="text-[13px] font-bold text-slate-500">No tasks</Text>
+            <View className="items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-8">
+              <View className="mb-2 h-11 w-11 items-center justify-center rounded-full bg-slate-100">
+                <Ionicons name="file-tray-outline" size={20} color="#94a3b8" />
+              </View>
+              <Text className="text-[13px] font-bold text-slate-500">No tasks yet</Text>
             </View>
           ) : null}
 
@@ -971,24 +1032,33 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
 
   return (
     <View className="flex-1 bg-slate-50 pt-2">
-      <View className="flex-row items-start gap-3 px-4 pb-3">
-        <View className="flex-1">
-          {hasGroupContext ? (
-            <>
-              <Text className="text-[28px] font-black leading-[34px] text-slate-900">
-                {groupInfo.name || currentGroupName}
-              </Text>
-              <Text className="mt-1 text-sm font-semibold leading-5 text-slate-500">
-                {groupInfo.description?.trim()
-                  ? groupInfo.description
-                  : "No description provided"}
-              </Text>
-            </>
-          ) : (
-            <Text className="text-2xl font-black leading-8 text-slate-900">
-              Tasks for {greetingName}
-            </Text>
-          )}
+      <View className="px-4 pb-3">
+        <View className="rounded-[24px] bg-white px-4 py-4 shadow-sm">
+          <View className="flex-row items-start justify-between gap-3">
+            <View className="flex-1">
+              {hasGroupContext ? (
+                <>
+                  <Text className="text-[28px] font-black leading-[34px] text-slate-900">
+                    {groupInfo.name || currentGroupName}
+                  </Text>
+                  <Text className="mt-1 text-sm font-semibold leading-5 text-slate-500">
+                    {groupInfo.description?.trim()
+                      ? groupInfo.description
+                      : "No description provided"}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text className="text-[28px] font-black leading-[34px] text-slate-900">
+                    Tasks for {greetingName}
+                  </Text>
+                  <Text className="mt-1 text-sm font-semibold leading-5 text-slate-500">
+                    Admin tasks assigned to this member
+                  </Text>
+                </>
+              )}
+            </View>
+          </View>
         </View>
       </View>
 
@@ -1003,7 +1073,7 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
         {renderColumn("done", doneColRef)}
       </ScrollView>
 
-      {canManageTasks && hasGroupContext ? (
+      {canManageTasks && (hasGroupContext || hasMemberContext) ? (
         <Pressable
           onPress={() => openNewTaskModal("todo")}
           className="absolute bottom-5 right-5 h-[60px] w-[60px] items-center justify-center rounded-full bg-slate-900"
@@ -1029,7 +1099,7 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
         </Pressable>
       ) : null}
 
-      {canManageTasks && hasGroupContext ? (
+      {canManageTasks && (hasGroupContext || hasMemberContext) ? (
         <Modal
           visible={showTaskModal}
           transparent
@@ -1039,54 +1109,56 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
             resetTaskForm();
           }}
         >
-          <Pressable
-            className="flex-1 justify-end bg-black/45"
-            onPress={() => {
-              setShowTaskModal(false);
-              resetTaskForm();
-            }}
-          >
+          <View className="flex-1 justify-end">
             <Pressable
-              className="max-h-[92%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2"
-              onPress={() => {}}
-            >
+              className="absolute inset-0 bg-black/45"
+              onPress={() => {
+                setShowTaskModal(false);
+                resetTaskForm();
+              }}
+            />
+            <View className="max-h-[92%] rounded-t-[28px] bg-white px-[18px] pb-[18px] pt-2">
               <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
-              <Text className="mb-3 text-center text-xl font-extrabold text-slate-900">
+              <Text className="mb-3 text-center text-[22px] font-black text-slate-900">
                 {editingTaskId ? "Edit Task" : "New Task"}
               </Text>
 
               <ScrollView
                 showsVerticalScrollIndicator={false}
-                contentContainerClassName="pb-2"
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                contentContainerClassName="pb-6"
                 contentContainerStyle={{ gap: 12 }}
               >
-                <View style={{ gap: 8 }}>
+                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
                   <Text className="text-[13px] font-extrabold text-slate-900">Title</Text>
                   <TextInput
                     value={taskTitle}
                     onChangeText={setTaskTitle}
                     placeholder="Task title"
-                    className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
+                    placeholderTextColor="#94a3b8"
+                    className="rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
                   />
                 </View>
 
-                <View style={{ gap: 8 }}>
+                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
                   <Text className="text-[13px] font-extrabold text-slate-900">Description</Text>
                   <TextInput
                     value={taskDescription}
                     onChangeText={setTaskDescription}
                     placeholder="Write a short description"
+                    placeholderTextColor="#94a3b8"
                     multiline
                     textAlignVertical="top"
-                    className="min-h-[90px] rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
+                    className="min-h-[90px] rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
                   />
                 </View>
 
-                <View style={{ gap: 8 }}>
+                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
                   <Text className="text-[13px] font-extrabold text-slate-900">Deadline</Text>
                   <Pressable
                     onPress={() => setShowDatePicker(true)}
-                    className="flex-row items-center rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                    className="flex-row items-center rounded-[16px] border border-slate-200 bg-white px-4 py-3"
                     style={({ pressed }) =>
                       pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
                     }
@@ -1112,7 +1184,7 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
                   ) : null}
                 </View>
 
-                <View style={{ gap: 8 }}>
+                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
                   <Text className="text-[13px] font-extrabold text-slate-900">Column</Text>
                   <View className="flex-row flex-wrap" style={{ gap: 8 }}>
                     {statusList.map((status) => {
@@ -1122,11 +1194,15 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
                           key={status.key}
                           onPress={() => setSelectedStatus(status.key)}
                           className={`rounded-full px-3 py-2 ${
-                            active ? "bg-slate-900" : "bg-slate-200"
+                            active ? "bg-slate-900" : "bg-white"
                           }`}
-                          style={({ pressed }) =>
-                            pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                          }
+                          style={({ pressed }) => [
+                            pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined,
+                            {
+                              borderWidth: 1,
+                              borderColor: active ? "#0f172a" : "#e2e8f0",
+                            },
+                          ]}
                         >
                           <Text
                             className={`text-xs font-extrabold ${
@@ -1141,19 +1217,21 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
                   </View>
                 </View>
 
-                <View style={{ gap: 8 }}>
+                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
                   <Text className="text-[13px] font-extrabold text-slate-900">Checklist</Text>
+
                   {taskChecklist.map((item, index) => (
-                    <View key={index} className="mb-2 flex-row items-center" style={{ gap: 8 }}>
+                    <View key={index} className="mb-2 flex-row items-center" style={{ gap: 10 }}>
                       <TextInput
                         value={item.text}
                         onChangeText={(text) => updateChecklistItem(index, text)}
                         placeholder={`Checklist ${index + 1}`}
-                        className="flex-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
+                        placeholderTextColor="#94a3b8"
+                        className="flex-1 rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
                       />
                       <Pressable
                         onPress={() => removeChecklistItem(index)}
-                        className="h-10 w-10 items-center justify-center rounded-xl bg-red-500"
+                        className="h-10 w-10 items-center justify-center rounded-[14px] bg-red-500"
                         style={({ pressed }) =>
                           pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
                         }
@@ -1177,12 +1255,12 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
                   </Pressable>
                 </View>
 
-                <View style={{ gap: 8 }}>
+                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
                   <Text className="text-[13px] font-extrabold text-slate-900">Assign Members</Text>
 
                   <Pressable
                     onPress={() => setShowMemberDropdown((prev) => !prev)}
-                    className="flex-row items-center justify-between rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                    className="flex-row items-center justify-between rounded-[16px] border border-slate-200 bg-white px-4 py-3"
                     style={({ pressed }) =>
                       pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
                     }
@@ -1207,8 +1285,8 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
                           className="flex-row items-center rounded-full bg-slate-200 px-3 py-1.5"
                           style={{ gap: 6 }}
                         >
-                          <View className="h-4 w-4 items-center justify-center rounded-full bg-slate-100">
-                            <Ionicons name="person" size={11} color="#6B7280" />
+                          <View className="h-4 w-4 items-center justify-center rounded-full bg-white">
+                            <Ionicons name="person" size={11} color="#64748b" />
                           </View>
                           <Text className="text-xs font-bold text-slate-900">{name}</Text>
                         </View>
@@ -1217,51 +1295,61 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
                   ) : null}
 
                   {showMemberDropdown ? (
-                    eligibleUsers.length === 0 ? (
-                      <Text className="font-semibold text-slate-500">
-                        No eligible members found
-                      </Text>
-                    ) : (
-                      <View style={{ gap: 10 }}>
-                        {eligibleUsers.map((member) => {
-                          const checked = selectedMemberIds.includes(member.id);
-                          return (
-                            <Pressable
-                              key={member.id}
-                              onPress={() => toggleMember(member.id)}
-                              className={`flex-row items-center rounded-[14px] border p-3 ${
-                                checked
-                                  ? "border-blue-200 bg-blue-50"
-                                  : "border-slate-200 bg-white"
-                              }`}
-                              style={({ pressed }) =>
-                                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                              }
-                            >
-                              <View className="h-7 w-7 items-center justify-center rounded-full bg-slate-100">
-                                <Ionicons name="person" size={16} color="#6B7280" />
-                              </View>
-                              <View
-                                className={`mx-2 h-[22px] w-[22px] items-center justify-center rounded-md border ${
+                    hasGroupContext ? (
+                      eligibleUsers.length === 0 ? (
+                        <Text className="font-semibold text-slate-500">
+                          No eligible members found
+                        </Text>
+                      ) : (
+                        <View style={{ gap: 10 }}>
+                          {eligibleUsers.map((member) => {
+                            const checked = selectedMemberIds.includes(member.id);
+                            return (
+                              <Pressable
+                                key={member.id}
+                                onPress={() => toggleMember(member.id)}
+                                className={`flex-row items-center rounded-[16px] border p-3 ${
                                   checked
-                                    ? "border-slate-900 bg-slate-900"
-                                    : "border-slate-400 bg-white"
+                                    ? "border-blue-200 bg-blue-50"
+                                    : "border-slate-200 bg-white"
                                 }`}
+                                style={({ pressed }) =>
+                                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                                }
                               >
-                                {checked ? (
-                                  <Text className="text-sm font-bold text-white">✓</Text>
-                                ) : null}
-                              </View>
-                              <View className="flex-1">
-                                <Text className="text-[15px] font-extrabold text-slate-900">
-                                  {member.name}
-                                </Text>
-                              </View>
-                            </Pressable>
-                          );
-                        })}
+                                <View className="h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+                                  <Ionicons name="person" size={16} color="#64748b" />
+                                </View>
+
+                                <View
+                                  className={`mx-3 h-6 w-6 items-center justify-center rounded-full border-2 ${
+                                    checked
+                                      ? "border-slate-900 bg-slate-900"
+                                      : "border-slate-300 bg-white"
+                                  }`}
+                                >
+                                  {checked ? (
+                                    <Ionicons name="checkmark" size={15} color="#FFFFFF" />
+                                  ) : null}
+                                </View>
+
+                                <View className="flex-1">
+                                  <Text className="text-[15px] font-extrabold text-slate-900">
+                                    {member.name}
+                                  </Text>
+                                </View>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      )
+                    ) : hasMemberContext ? (
+                      <View className="rounded-[16px] bg-white px-4 py-3">
+                        <Text className="font-semibold text-slate-600">
+                          This task will be assigned to {greetingName}
+                        </Text>
                       </View>
-                    )
+                    ) : null
                   ) : null}
                 </View>
 
@@ -1271,7 +1359,7 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
                       setShowTaskModal(false);
                       resetTaskForm();
                     }}
-                    className="rounded-[14px] bg-slate-200 px-4 py-3"
+                    className="rounded-[16px] bg-slate-200 px-4 py-3"
                     style={({ pressed }) =>
                       pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
                     }
@@ -1282,7 +1370,7 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
                   <Pressable
                     onPress={saveTask}
                     disabled={saving}
-                    className="rounded-[14px] bg-slate-900 px-4 py-3"
+                    className="rounded-[16px] bg-slate-900 px-4 py-3"
                     style={({ pressed }) => [
                       pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined,
                       saving ? { opacity: 0.75 } : null,
@@ -1294,8 +1382,8 @@ export default function TaskBoard({ userId, userRole, memberName, targetMemberId
                   </Pressable>
                 </View>
               </ScrollView>
-            </Pressable>
-          </Pressable>
+            </View>
+          </View>
         </Modal>
       ) : null}
 

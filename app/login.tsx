@@ -1,9 +1,11 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { collection, getDocs, query, where } from "firebase/firestore";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,11 +16,31 @@ import {
 } from "react-native";
 import { db } from "../lib/firebaseConfig";
 
+const STORAGE_KEY = "newlife_user_id";
+
 export default function Login() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    const checkSavedLogin = async () => {
+      try {
+        const savedId = await AsyncStorage.getItem(STORAGE_KEY);
+        if (savedId) {
+          router.replace({ pathname: "/main", params: { id: savedId } });
+          return;
+        }
+      } catch (error) {
+      } finally {
+        setCheckingSession(false);
+      }
+    };
+
+    checkSavedLogin();
+  }, [router]);
 
   const handleLogin = async () => {
     if (loading) return;
@@ -43,13 +65,23 @@ export default function Login() {
         return;
       }
 
-      router.replace({ pathname: "/main", params: { id: snap.docs[0].id } });
+      const userId = snap.docs[0].id;
+      await AsyncStorage.setItem(STORAGE_KEY, userId);
+      router.replace({ pathname: "/main", params: { id: userId } });
     } catch (error) {
       Alert.alert("Error", "Login failed");
     } finally {
       setLoading(false);
     }
   };
+
+  if (checkingSession) {
+    return (
+      <SafeAreaView className="flex-1 items-center justify-center bg-[#F4F7FB]">
+        <ActivityIndicator size="large" color="#2563EB" />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-[#F4F7FB]">
@@ -61,16 +93,13 @@ export default function Login() {
         <View className="absolute -bottom-12 -left-12 h-44 w-44 rounded-full bg-[#E8F4FF] opacity-90" />
 
         <View className="rounded-[24px] bg-white p-6 shadow-lg shadow-black/10">
-          <View className="mb-6 items-center">
-            <View className="mb-3 h-[72px] w-[72px] items-center justify-center rounded-full bg-blue-600">
-              <Text className="text-[22px] font-extrabold tracking-[1px] text-white">
-                NL
-              </Text>
-            </View>
-            <Text className="text-2xl font-extrabold text-gray-900">
-              NewLife Danao
-            </Text>
-            <Text className="mt-1.5 text-sm text-gray-500">App Login</Text>
+          <View className="mb-3 items-center">
+            <Image
+              source={require("../assets/images/NL-icon.jpg")}
+              style={{ width: 100, height: 100 }}
+              resizeMode="contain"
+              className="mb-1"
+            />
           </View>
 
           <View className="gap-3">
