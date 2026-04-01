@@ -27,7 +27,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -108,6 +107,8 @@ type TaskBoardProps = {
   userId?: string;
   userRole?: string;
   memberName?: string;
+  targetMemberId?: string;
+  targetMemberName?: string;
 };
 
 const statusList: Array<{
@@ -269,46 +270,63 @@ function TaskCard({
           height: e.nativeEvent.layout.height,
         })
       }
-      style={[styles.card, isDragging && styles.cardDragging]}
+      className={`rounded-2xl border border-slate-200 bg-white p-4 ${isDragging ? "opacity-25" : ""}`}
+      style={{ gap: 10 }}
     >
-      <View style={styles.cardTopRow}>
-        <View style={styles.cardTitleWrap}>
-          <Text style={styles.cardTitle}>{task.title}</Text>
-          {showGroupMeta ? <Text style={styles.groupMetaText}>{task.groupName || "Group"}</Text> : null}
+      <View className="flex-row items-start justify-between gap-2">
+        <View className="flex-1" style={{ gap: 4 }}>
+          <Text className="text-base font-extrabold text-slate-900">{task.title}</Text>
+          {showGroupMeta ? (
+            <Text className="text-xs font-bold text-slate-500">
+              {task.groupName || "Group"}
+            </Text>
+          ) : null}
         </View>
 
         {canManageTask && onDelete ? (
           <Pressable
             onPressIn={blockOpenBriefly}
             onPress={() => onDelete(task.id)}
-            style={styles.iconBtn}
+            className="h-[30px] w-[30px] items-center justify-center rounded-full bg-slate-100"
           >
             <Ionicons name="trash-outline" size={18} color="#991B1B" />
           </Pressable>
         ) : null}
       </View>
 
-      <Text style={styles.cardDescription}>{descriptionText}</Text>
+      <Text className="text-[13px] leading-[18px] text-slate-600">{descriptionText}</Text>
 
       {checklistTotal > 0 ? (
-        <Text style={styles.metaText}>
+        <Text className="text-xs font-bold text-slate-500">
           Checklist {checklistDone}/{checklistTotal}
         </Text>
       ) : null}
 
       {task.checklist.length > 0 ? (
-        <View style={styles.checklistWrap}>
+        <View style={{ gap: 8 }}>
           {task.checklist.map((item, index) => (
             <Pressable
               key={`${task.id}-check-${index}`}
               onPressIn={blockOpenBriefly}
               onPress={() => onToggleChecklist(task.id, index, !item.done)}
-              style={({ pressed }) => [styles.checklistRow, pressed && styles.pressed]}
+              className="flex-row items-center py-1"
+              style={({ pressed }) => [
+                pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
+                { gap: 8 },
+              ]}
             >
-              <View style={[styles.checkBoxMini, item.done && styles.checkBoxMiniActive]}>
-                {item.done ? <Text style={styles.checkTextMini}>✓</Text> : null}
+              <View
+                className={`h-5 w-5 items-center justify-center rounded-md border bg-white ${
+                  item.done ? "border-slate-900 bg-slate-900" : "border-slate-400"
+                }`}
+              >
+                {item.done ? <Text className="text-[13px] font-extrabold text-white">✓</Text> : null}
               </View>
-              <Text style={[styles.checklistText, item.done && styles.checklistTextDone]}>
+              <Text
+                className={`flex-1 text-[13px] font-semibold ${
+                  item.done ? "text-slate-500 line-through" : "text-slate-900"
+                }`}
+              >
                 {item.text}
               </Text>
             </Pressable>
@@ -317,37 +335,46 @@ function TaskCard({
       ) : null}
 
       {task.assignedMemberNames.length > 0 ? (
-        <View style={styles.assigneeWrap}>
+        <View className="flex-row flex-wrap items-center" style={{ gap: 6 }}>
           {task.assignedMemberNames.slice(0, 3).map((name, index) => (
-            <View key={`${name}-${index}`} style={styles.assigneeChip}>
-              <View style={styles.pfpPlaceholder}>
+            <View
+              key={`${name}-${index}`}
+              className="flex-row items-center rounded-full bg-slate-200 px-3 py-1.5"
+              style={{ gap: 6 }}
+            >
+              <View className="h-[18px] w-[18px] items-center justify-center rounded-full bg-slate-100">
                 <Ionicons name="person" size={12} color="#6B7280" />
               </View>
-              <Text style={styles.assigneeChipText}>{name}</Text>
+              <Text className="text-xs font-bold text-slate-900">{name}</Text>
             </View>
           ))}
           {task.assignedMemberNames.length > 3 ? (
-            <Text style={styles.moreAssignees}>
+            <Text className="text-xs font-bold text-slate-500">
               +{task.assignedMemberNames.length - 3}
             </Text>
           ) : null}
         </View>
       ) : null}
 
-      <View style={styles.deadlineBlock}>
-        <Text style={styles.deadlineLabel}>Deadline:</Text>
-        <Text style={styles.deadlineValue}>{task.deadline || "No deadline"}</Text>
+      <View style={{ gap: 2 }}>
+        <Text className="text-xs font-extrabold text-slate-900">Deadline:</Text>
+        <Text className="text-xs font-bold text-slate-500">
+          {task.deadline || "No deadline"}
+        </Text>
       </View>
     </Animated.View>
   );
 }
 
-export default function TaskBoard({ userId, userRole, memberName }: TaskBoardProps) {
+export default function TaskBoard({ userId, userRole, memberName, targetMemberId, targetMemberName }: TaskBoardProps) {
   const params = useLocalSearchParams<{
     groupId?: string;
     groupName?: string;
     groupKind?: string;
     id?: string;
+    name?: string;
+    memberId?: string;
+    memberName?: string;
     userRole?: string;
   }>();
 
@@ -357,10 +384,12 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
   const groupCollectionName = currentGroupKind === "coreGroup" ? "coreGroups" : "ministries";
 
   const currentUserId = String(userId ?? params.id ?? "");
-  const fallbackMemberName = String(memberName ?? "Member");
+  const currentMemberId = String(targetMemberId ?? params.memberId ?? params.id ?? "");
+  const currentMemberName = String(targetMemberName ?? params.memberName ?? params.name ?? memberName ?? "Member");
   const initialRole = String(userRole ?? params.userRole ?? "");
 
-  const isMemberView = !currentGroupId || !currentGroupName;
+  const hasGroupContext = !!currentGroupId && !!currentGroupName;
+  const hasMemberContext = !hasGroupContext && !!currentMemberId;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -443,12 +472,18 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
   }, []);
 
   const loadTasks = useCallback(async () => {
-    if (!isMemberView && (!currentGroupId || !currentGroupName)) {
+    if (hasGroupContext && (!currentGroupId || !currentGroupName)) {
       setLoading(false);
       return;
     }
 
-    if (isMemberView && !currentUserId) {
+    if (hasMemberContext && !currentMemberId) {
+      setLoading(false);
+      setTasks([]);
+      return;
+    }
+
+    if (!hasGroupContext && !hasMemberContext && !currentUserId) {
       setLoading(false);
       setTasks([]);
       return;
@@ -458,9 +493,9 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
     try {
       const taskSnapPromise = getDocs(collection(db, "tasks"));
       const usersSnapPromise = getDocs(collection(db, "users"));
-      const groupSnapPromise = isMemberView
-        ? Promise.resolve(null)
-        : getDoc(doc(db, groupCollectionName, currentGroupId));
+      const groupSnapPromise = hasGroupContext
+        ? getDoc(doc(db, groupCollectionName, currentGroupId))
+        : Promise.resolve(null);
 
       const [taskSnap, usersSnap, groupSnap] = await Promise.all([
         taskSnapPromise,
@@ -515,14 +550,19 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
         })
         .filter((item) => item.title.length > 0)
         .filter((item) => {
-          if (isMemberView) {
-            return item.assignedMemberIds.includes(currentUserId);
+          if (hasGroupContext) {
+            return item.groupId === currentGroupId && item.groupName === currentGroupName;
           }
-          return item.groupId === currentGroupId && item.groupName === currentGroupName;
+
+          if (hasMemberContext) {
+            return item.assignedMemberIds.includes(currentMemberId);
+          }
+
+          return item.assignedMemberIds.includes(currentUserId);
         })
         .sort((a, b) => a.order - b.order);
 
-      if (!isMemberView) {
+      if (hasGroupContext) {
         const groupData = groupSnap?.data?.() as any;
         setGroupInfo({
           name: String(groupData?.name ?? currentGroupName ?? "Group"),
@@ -537,7 +577,7 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
     } finally {
       setLoading(false);
     }
-  }, [currentGroupId, currentGroupName, currentGroupKind, currentUserId, groupCollectionName, isMemberView]);
+  }, [currentGroupId, currentGroupName, currentGroupKind, currentMemberId, currentUserId, groupCollectionName, hasGroupContext, hasMemberContext]);
 
   useFocusEffect(
     useCallback(() => {
@@ -546,6 +586,7 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
   );
 
   const eligibleUsers = useMemo(() => {
+    if (!hasGroupContext) return [];
     const targetField = currentGroupKind === "ministry" ? "ministry" : "coreGroup";
     return users
       .filter((user) => {
@@ -556,7 +597,7 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
         return hasGroup || isAdminRole(user.role);
       })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, currentGroupKind, currentGroupName]);
+  }, [users, currentGroupKind, currentGroupName, hasGroupContext]);
 
   const groupedTasks = useMemo(() => {
     const map: Record<TaskStatus, TaskItem[]> = {
@@ -590,6 +631,7 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
 
   const openNewTaskModal = (status: TaskStatus = "todo") => {
     if (!canManageTasks) return;
+    if (!hasGroupContext) return;
     resetTaskForm();
     setSelectedStatus(status);
     setShowTaskModal(true);
@@ -668,6 +710,7 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
 
   const saveTask = async () => {
     if (!canManageTasks) return;
+    if (!hasGroupContext) return;
 
     const title = taskTitle.trim();
     const description = taskDescription.trim() || "No description provided";
@@ -832,15 +875,18 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
     return (
       <View
         ref={ref}
+        collapsable={false}
         onLayout={measureColumns}
-        style={[styles.column, isDropTarget && styles.columnActiveDrop]}
+        className={`w-[300px] rounded-[20px] p-3 min-h-[500px] bg-slate-100 ${
+          isDropTarget ? "border-2 border-slate-900" : ""
+        }`}
       >
-        <View style={styles.columnHeader}>
+        <View className="mb-3 flex-row items-center justify-between">
           <View>
-            <Text style={styles.columnTitle}>
+            <Text className="text-lg font-extrabold text-slate-900">
               {status === "todo" ? "To Do" : status === "doing" ? "Doing" : "Done"}
             </Text>
-            <Text style={styles.columnHint}>
+            <Text className="mt-0.5 text-xs font-semibold text-slate-500">
               {status === "todo"
                 ? "Backlog"
                 : status === "doing"
@@ -849,10 +895,13 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
             </Text>
           </View>
 
-          {canManageTasks ? (
+          {canManageTasks && hasGroupContext ? (
             <Pressable
               onPress={() => openNewTaskModal(status)}
-              style={({ pressed }) => [styles.addInlineBtn, pressed && styles.pressed]}
+              className="h-[34px] w-[34px] items-center justify-center rounded-full border border-slate-200 bg-white"
+              style={({ pressed }) =>
+                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+              }
             >
               <Ionicons name="add" size={18} color="#111827" />
             </Pressable>
@@ -861,11 +910,12 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
 
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ gap: 12, paddingBottom: 20 }}
+          contentContainerClassName="pb-5"
+          contentContainerStyle={{ gap: 12 }}
         >
           {data.length === 0 ? (
-            <View style={styles.emptyColumn}>
-              <Text style={styles.emptyColumnText}>No tasks</Text>
+            <View className="items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-5">
+              <Text className="text-[13px] font-bold text-slate-500">No tasks</Text>
             </View>
           ) : null}
 
@@ -881,7 +931,7 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
               onEndDrag={endDrag}
               isDragging={dragState?.task.id === item.id}
               canManageTask={canManageTasks}
-              showGroupMeta={isMemberView}
+              showGroupMeta={!hasGroupContext}
             />
           ))}
         </ScrollView>
@@ -891,16 +941,24 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
 
   if (loading) {
     return (
-      <View style={styles.loadingWrap}>
-        <Text style={styles.loadingText}>Loading...</Text>
+      <View className="flex-1 items-center justify-center bg-slate-50">
+        <Text className="text-base font-semibold text-slate-900">Loading...</Text>
       </View>
     );
   }
 
-  if (!isMemberView && (!currentGroupId || !currentGroupName)) {
+  if (hasGroupContext && (!currentGroupId || !currentGroupName)) {
     return (
-      <View style={styles.loadingWrap}>
-        <Text style={styles.loadingText}>Missing group</Text>
+      <View className="flex-1 items-center justify-center bg-slate-50">
+        <Text className="text-base font-semibold text-slate-900">Missing group</Text>
+      </View>
+    );
+  }
+
+  if (hasMemberContext && !currentMemberId) {
+    return (
+      <View className="flex-1 items-center justify-center bg-slate-50">
+        <Text className="text-base font-semibold text-slate-900">Missing member</Text>
       </View>
     );
   }
@@ -909,23 +967,27 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
     .map((id) => users.find((u) => u.id === id)?.name)
     .filter((name): name is string => Boolean(name));
 
-  const greetingName = fallbackMemberName || "Member";
+  const greetingName = currentMemberName || "Member";
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <View style={{ flex: 1 }}>
-          {isMemberView ? (
-            <Text style={styles.memberGreeting}>Hi {greetingName}! Here is your task!</Text>
-          ) : (
+    <View className="flex-1 bg-slate-50 pt-2">
+      <View className="flex-row items-start gap-3 px-4 pb-3">
+        <View className="flex-1">
+          {hasGroupContext ? (
             <>
-              <Text style={styles.title}>{groupInfo.name || currentGroupName}</Text>
-              <Text style={styles.subtitle}>
+              <Text className="text-[28px] font-black leading-[34px] text-slate-900">
+                {groupInfo.name || currentGroupName}
+              </Text>
+              <Text className="mt-1 text-sm font-semibold leading-5 text-slate-500">
                 {groupInfo.description?.trim()
                   ? groupInfo.description
                   : "No description provided"}
               </Text>
             </>
+          ) : (
+            <Text className="text-2xl font-black leading-8 text-slate-900">
+              Tasks for {greetingName}
+            </Text>
           )}
         </View>
       </View>
@@ -933,23 +995,41 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.board}
+        contentContainerClassName="px-4 pb-28"
+        contentContainerStyle={{ gap: 14 }}
       >
         {renderColumn("todo", todoColRef)}
         {renderColumn("doing", doingColRef)}
         {renderColumn("done", doneColRef)}
       </ScrollView>
 
-      {canManageTasks ? (
+      {canManageTasks && hasGroupContext ? (
         <Pressable
           onPress={() => openNewTaskModal("todo")}
-          style={({ pressed }) => [styles.fab, pressed && styles.pressed]}
+          className="absolute bottom-5 right-5 h-[60px] w-[60px] items-center justify-center rounded-full bg-slate-900"
+          style={({ pressed }) =>
+            pressed
+              ? {
+                  opacity: 0.85,
+                  transform: [{ scale: 0.98 }],
+                  shadowOpacity: 0.25,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 4 },
+                }
+              : {
+                  shadowColor: "#000",
+                  shadowOpacity: 0.25,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 4 },
+                  elevation: 6,
+                }
+          }
         >
           <Ionicons name="add" size={32} color="white" />
         </Pressable>
       ) : null}
 
-      {canManageTasks ? (
+      {canManageTasks && hasGroupContext ? (
         <Modal
           visible={showTaskModal}
           transparent
@@ -960,52 +1040,61 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
           }}
         >
           <Pressable
-            style={styles.backdrop}
+            className="flex-1 justify-end bg-black/45"
             onPress={() => {
               setShowTaskModal(false);
               resetTaskForm();
             }}
           >
-            <Pressable style={styles.sheet} onPress={() => {}}>
-              <View style={styles.sheetHandle} />
-              <Text style={styles.sheetTitle}>
+            <Pressable
+              className="max-h-[92%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2"
+              onPress={() => {}}
+            >
+              <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
+              <Text className="mb-3 text-center text-xl font-extrabold text-slate-900">
                 {editingTaskId ? "Edit Task" : "New Task"}
               </Text>
 
               <ScrollView
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.sheetContent}
+                contentContainerClassName="pb-2"
+                contentContainerStyle={{ gap: 12 }}
               >
-                <View style={styles.field}>
-                  <Text style={styles.label}>Title</Text>
+                <View style={{ gap: 8 }}>
+                  <Text className="text-[13px] font-extrabold text-slate-900">Title</Text>
                   <TextInput
                     value={taskTitle}
                     onChangeText={setTaskTitle}
                     placeholder="Task title"
-                    style={styles.input}
+                    className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
                   />
                 </View>
 
-                <View style={styles.field}>
-                  <Text style={styles.label}>Description</Text>
+                <View style={{ gap: 8 }}>
+                  <Text className="text-[13px] font-extrabold text-slate-900">Description</Text>
                   <TextInput
                     value={taskDescription}
                     onChangeText={setTaskDescription}
                     placeholder="Write a short description"
                     multiline
                     textAlignVertical="top"
-                    style={[styles.input, styles.textArea]}
+                    className="min-h-[90px] rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
                   />
                 </View>
 
-                <View style={styles.field}>
-                  <Text style={styles.label}>Deadline</Text>
+                <View style={{ gap: 8 }}>
+                  <Text className="text-[13px] font-extrabold text-slate-900">Deadline</Text>
                   <Pressable
                     onPress={() => setShowDatePicker(true)}
-                    style={({ pressed }) => [styles.dateBtn, pressed && styles.pressed]}
+                    className="flex-row items-center rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                    style={({ pressed }) =>
+                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                    }
                   >
                     <Ionicons name="calendar-outline" size={18} color="#111827" />
-                    <Text style={styles.dateBtnText}>{deadline.toISOString().slice(0, 10)}</Text>
+                    <Text className="ml-2 text-[15px] font-bold text-slate-900">
+                      {deadline.toISOString().slice(0, 10)}
+                    </Text>
                   </Pressable>
 
                   {showDatePicker ? (
@@ -1023,26 +1112,26 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
                   ) : null}
                 </View>
 
-                <View style={styles.field}>
-                  <Text style={styles.label}>Column</Text>
-                  <View style={styles.statusRow}>
+                <View style={{ gap: 8 }}>
+                  <Text className="text-[13px] font-extrabold text-slate-900">Column</Text>
+                  <View className="flex-row flex-wrap" style={{ gap: 8 }}>
                     {statusList.map((status) => {
                       const active = selectedStatus === status.key;
                       return (
                         <Pressable
                           key={status.key}
                           onPress={() => setSelectedStatus(status.key)}
-                          style={({ pressed }) => [
-                            styles.statusChip,
-                            active && styles.statusChipActive,
-                            pressed && styles.pressed,
-                          ]}
+                          className={`rounded-full px-3 py-2 ${
+                            active ? "bg-slate-900" : "bg-slate-200"
+                          }`}
+                          style={({ pressed }) =>
+                            pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                          }
                         >
                           <Text
-                            style={[
-                              styles.statusChipText,
-                              active && styles.statusChipTextActive,
-                            ]}
+                            className={`text-xs font-extrabold ${
+                              active ? "text-white" : "text-slate-900"
+                            }`}
                           >
                             {status.label}
                           </Text>
@@ -1052,19 +1141,22 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
                   </View>
                 </View>
 
-                <View style={styles.field}>
-                  <Text style={styles.label}>Checklist</Text>
+                <View style={{ gap: 8 }}>
+                  <Text className="text-[13px] font-extrabold text-slate-900">Checklist</Text>
                   {taskChecklist.map((item, index) => (
-                    <View key={index} style={styles.checklistRowEditor}>
+                    <View key={index} className="mb-2 flex-row items-center" style={{ gap: 8 }}>
                       <TextInput
                         value={item.text}
                         onChangeText={(text) => updateChecklistItem(index, text)}
                         placeholder={`Checklist ${index + 1}`}
-                        style={[styles.input, styles.checklistInput]}
+                        className="flex-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
                       />
                       <Pressable
                         onPress={() => removeChecklistItem(index)}
-                        style={({ pressed }) => [styles.removeBtn, pressed && styles.pressed]}
+                        className="h-10 w-10 items-center justify-center rounded-xl bg-red-500"
+                        style={({ pressed }) =>
+                          pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                        }
                       >
                         <Ionicons name="close" size={18} color="#fff" />
                       </Pressable>
@@ -1075,21 +1167,27 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
                     onPress={() =>
                       setTaskChecklist((prev) => [...prev, { text: "", done: false }])
                     }
-                    style={({ pressed }) => [styles.addChecklistBtn, pressed && styles.pressed]}
+                    className="self-start flex-row items-center rounded-full bg-slate-900 px-4 py-2.5"
+                    style={({ pressed }) =>
+                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                    }
                   >
                     <Ionicons name="add" size={16} color="#fff" />
-                    <Text style={styles.addChecklistText}>Add checklist item</Text>
+                    <Text className="ml-2 font-bold text-white">Add checklist item</Text>
                   </Pressable>
                 </View>
 
-                <View style={styles.field}>
-                  <Text style={styles.label}>Assign Members</Text>
+                <View style={{ gap: 8 }}>
+                  <Text className="text-[13px] font-extrabold text-slate-900">Assign Members</Text>
 
                   <Pressable
                     onPress={() => setShowMemberDropdown((prev) => !prev)}
-                    style={({ pressed }) => [styles.selectMembersBtn, pressed && styles.pressed]}
+                    className="flex-row items-center justify-between rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                    style={({ pressed }) =>
+                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                    }
                   >
-                    <Text style={styles.selectMembersBtnText}>
+                    <Text className="text-[15px] font-bold text-slate-900">
                       {selectedMemberNames.length > 0
                         ? `Selected Members (${selectedMemberNames.length})`
                         : "Select Members"}
@@ -1102,13 +1200,17 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
                   </Pressable>
 
                   {selectedMemberNames.length > 0 ? (
-                    <View style={styles.selectedMemberWrap}>
+                    <View className="flex-row flex-wrap" style={{ gap: 6 }}>
                       {selectedMemberNames.map((name, index) => (
-                        <View key={`${name}-${index}`} style={styles.selectedMemberChip}>
-                          <View style={styles.pfpPlaceholderSmall}>
+                        <View
+                          key={`${name}-${index}`}
+                          className="flex-row items-center rounded-full bg-slate-200 px-3 py-1.5"
+                          style={{ gap: 6 }}
+                        >
+                          <View className="h-4 w-4 items-center justify-center rounded-full bg-slate-100">
                             <Ionicons name="person" size={11} color="#6B7280" />
                           </View>
-                          <Text style={styles.selectedMemberChipText}>{name}</Text>
+                          <Text className="text-xs font-bold text-slate-900">{name}</Text>
                         </View>
                       ))}
                     </View>
@@ -1116,29 +1218,44 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
 
                   {showMemberDropdown ? (
                     eligibleUsers.length === 0 ? (
-                      <Text style={styles.emptyAssigneeText}>No eligible members found</Text>
+                      <Text className="font-semibold text-slate-500">
+                        No eligible members found
+                      </Text>
                     ) : (
-                      <View style={styles.assigneeList}>
+                      <View style={{ gap: 10 }}>
                         {eligibleUsers.map((member) => {
                           const checked = selectedMemberIds.includes(member.id);
                           return (
                             <Pressable
                               key={member.id}
                               onPress={() => toggleMember(member.id)}
-                              style={({ pressed }) => [
-                                styles.assigneeRow,
-                                checked && styles.assigneeRowActive,
-                                pressed && styles.pressed,
-                              ]}
+                              className={`flex-row items-center rounded-[14px] border p-3 ${
+                                checked
+                                  ? "border-blue-200 bg-blue-50"
+                                  : "border-slate-200 bg-white"
+                              }`}
+                              style={({ pressed }) =>
+                                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                              }
                             >
-                              <View style={styles.pfpPlaceholderLarge}>
+                              <View className="h-7 w-7 items-center justify-center rounded-full bg-slate-100">
                                 <Ionicons name="person" size={16} color="#6B7280" />
                               </View>
-                              <View style={[styles.checkBox, checked && styles.checkBoxActive]}>
-                                {checked ? <Text style={styles.checkText}>✓</Text> : null}
+                              <View
+                                className={`mx-2 h-[22px] w-[22px] items-center justify-center rounded-md border ${
+                                  checked
+                                    ? "border-slate-900 bg-slate-900"
+                                    : "border-slate-400 bg-white"
+                                }`}
+                              >
+                                {checked ? (
+                                  <Text className="text-sm font-bold text-white">✓</Text>
+                                ) : null}
                               </View>
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.assigneeName}>{member.name}</Text>
+                              <View className="flex-1">
+                                <Text className="text-[15px] font-extrabold text-slate-900">
+                                  {member.name}
+                                </Text>
                               </View>
                             </Pressable>
                           );
@@ -1148,27 +1265,30 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
                   ) : null}
                 </View>
 
-                <View style={styles.sheetActions}>
+                <View className="flex-row justify-end pt-1" style={{ gap: 10 }}>
                   <Pressable
                     onPress={() => {
                       setShowTaskModal(false);
                       resetTaskForm();
                     }}
-                    style={({ pressed }) => [styles.cancelBtn, pressed && styles.pressed]}
+                    className="rounded-[14px] bg-slate-200 px-4 py-3"
+                    style={({ pressed }) =>
+                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                    }
                   >
-                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                    <Text className="font-extrabold text-slate-900">Cancel</Text>
                   </Pressable>
 
                   <Pressable
                     onPress={saveTask}
                     disabled={saving}
+                    className="rounded-[14px] bg-slate-900 px-4 py-3"
                     style={({ pressed }) => [
-                      styles.saveBtn,
-                      pressed && styles.pressed,
-                      saving && { opacity: 0.75 },
+                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined,
+                      saving ? { opacity: 0.75 } : null,
                     ]}
                   >
-                    <Text style={styles.saveBtnText}>
+                    <Text className="font-extrabold text-white">
                       {editingTaskId ? "Update" : "Create"}
                     </Text>
                   </Pressable>
@@ -1182,19 +1302,30 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
       {dragState ? (
         <Animated.View
           pointerEvents="none"
-          style={[
-            styles.dragOverlay,
-            {
-              left: dragState.x,
-              top: dragState.y,
-              width: dragState.width,
-              minHeight: dragState.height,
-            },
-          ]}
+          className="absolute z-[9999]"
+          style={{
+            left: dragState.x,
+            top: dragState.y,
+            width: dragState.width,
+            minHeight: dragState.height,
+            elevation: 20,
+          }}
         >
-          <View style={styles.dragOverlayInner}>
-            <Text style={styles.dragOverlayTitle}>{dragState.task.title}</Text>
-            <Text style={styles.dragOverlayText}>
+          <View
+            className="rounded-2xl border border-slate-900 bg-white p-4"
+            style={{
+              gap: 8,
+              shadowColor: "#000",
+              shadowOpacity: 0.2,
+              shadowRadius: 12,
+              shadowOffset: { width: 0, height: 6 },
+              elevation: 12,
+            }}
+          >
+            <Text className="text-base font-extrabold text-slate-900">
+              {dragState.task.title}
+            </Text>
+            <Text className="text-[13px] leading-[18px] text-slate-600">
               {dragState.task.description || "No description provided"}
             </Text>
           </View>
@@ -1203,532 +1334,3 @@ export default function TaskBoard({ userId, userRole, memberName }: TaskBoardPro
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: "#F7F8FA",
-    paddingTop: 10,
-  },
-  loadingWrap: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#F7F8FA",
-  },
-  loadingText: {
-    fontSize: 16,
-    color: "#111827",
-    fontWeight: "600",
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "900",
-    color: "#111827",
-    lineHeight: 34,
-  },
-  memberGreeting: {
-    fontSize: 24,
-    fontWeight: "900",
-    color: "#111827",
-    lineHeight: 32,
-  },
-  subtitle: {
-    marginTop: 4,
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#6B7280",
-    lineHeight: 20,
-  },
-  board: {
-    paddingHorizontal: 16,
-    paddingBottom: 120,
-    gap: 14,
-  },
-  column: {
-    width: 300,
-    backgroundColor: "#EEF2F7",
-    borderRadius: 20,
-    padding: 12,
-    minHeight: 500,
-  },
-  columnActiveDrop: {
-    borderWidth: 2,
-    borderColor: "#111827",
-  },
-  columnHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  columnTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  columnHint: {
-    marginTop: 2,
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#6B7280",
-  },
-  addInlineBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emptyColumn: {
-    paddingVertical: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: "#D1D5DB",
-    borderRadius: 16,
-    backgroundColor: "#F9FAFB",
-  },
-  emptyColumnText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#6B7280",
-  },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    gap: 10,
-  },
-  cardDragging: {
-    opacity: 0.25,
-  },
-  cardTopRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  cardTitleWrap: {
-    flex: 1,
-    gap: 4,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  groupMetaText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#6B7280",
-  },
-  iconBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cardDescription: {
-    fontSize: 13,
-    color: "#4B5563",
-    lineHeight: 18,
-  },
-  metaText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#6B7280",
-  },
-  checklistWrap: {
-    gap: 8,
-  },
-  checklistRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 4,
-  },
-  checkBoxMini: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#9CA3AF",
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#fff",
-  },
-  checkBoxMiniActive: {
-    backgroundColor: "#111827",
-    borderColor: "#111827",
-  },
-  checkTextMini: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  checklistText: {
-    flex: 1,
-    fontSize: 13,
-    color: "#111827",
-    fontWeight: "600",
-  },
-  checklistTextDone: {
-    color: "#6B7280",
-    textDecorationLine: "line-through",
-  },
-  assigneeWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    alignItems: "center",
-  },
-  assigneeChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#E5E7EB",
-  },
-  pfpPlaceholder: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  pfpPlaceholderSmall: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  pfpPlaceholderLarge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  assigneeChipText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  moreAssignees: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#6B7280",
-  },
-  deadlineBlock: {
-    gap: 2,
-  },
-  deadlineLabel: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  deadlineValue: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#6B7280",
-  },
-  fab: {
-    position: "absolute",
-    right: 20,
-    bottom: 20,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: "#111827",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 18,
-    maxHeight: "92%",
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 44,
-    height: 5,
-    borderRadius: 99,
-    backgroundColor: "#D1D5DB",
-    marginBottom: 14,
-  },
-  sheetTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#111827",
-    textAlign: "center",
-    marginBottom: 14,
-  },
-  sheetContent: {
-    gap: 12,
-    paddingBottom: 10,
-  },
-  field: {
-    gap: 8,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: "#111827",
-    backgroundColor: "#fff",
-  },
-  textArea: {
-    minHeight: 90,
-  },
-  dateBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: "#fff",
-  },
-  dateBtnText: {
-    fontSize: 15,
-    color: "#111827",
-    fontWeight: "700",
-  },
-  statusRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  statusChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#E5E7EB",
-  },
-  statusChipActive: {
-    backgroundColor: "#111827",
-  },
-  statusChipText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  statusChipTextActive: {
-    color: "#fff",
-  },
-  checklistRowEditor: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 10,
-  },
-  checklistInput: {
-    flex: 1,
-  },
-  removeBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: "#EF4444",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addChecklistBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    alignSelf: "flex-start",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#111827",
-  },
-  addChecklistText: {
-    color: "#fff",
-    fontWeight: "700",
-  },
-  emptyAssigneeText: {
-    color: "#6B7280",
-    fontWeight: "600",
-  },
-  selectMembersBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: "#fff",
-  },
-  selectMembersBtnText: {
-    fontSize: 15,
-    color: "#111827",
-    fontWeight: "700",
-  },
-  selectedMemberWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  selectedMemberChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#E5E7EB",
-  },
-  selectedMemberChipText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  assigneeList: {
-    gap: 10,
-  },
-  assigneeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: "#fff",
-  },
-  assigneeRowActive: {
-    backgroundColor: "#EFF6FF",
-    borderColor: "#BFDBFE",
-  },
-  checkBox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#9CA3AF",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  checkBoxActive: {
-    backgroundColor: "#111827",
-    borderColor: "#111827",
-  },
-  checkText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  assigneeName: {
-    fontWeight: "800",
-    color: "#111827",
-    fontSize: 15,
-  },
-  sheetActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 10,
-    paddingTop: 4,
-  },
-  cancelBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#E5E7EB",
-  },
-  cancelBtnText: {
-    fontWeight: "800",
-    color: "#111827",
-  },
-  saveBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#111827",
-  },
-  saveBtnText: {
-    fontWeight: "800",
-    color: "#fff",
-  },
-  pressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
-  },
-  dragOverlay: {
-    position: "absolute",
-    zIndex: 9999,
-    elevation: 20,
-  },
-  dragOverlayInner: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#111827",
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 12,
-    gap: 8,
-  },
-  dragOverlayTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  dragOverlayText: {
-    fontSize: 13,
-    color: "#4B5563",
-    lineHeight: 18,
-  },
-});

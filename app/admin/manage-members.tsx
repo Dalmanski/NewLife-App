@@ -8,27 +8,33 @@ import {
   getDocs,
   updateDoc,
 } from "firebase/firestore";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Modal,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { db } from "../../lib/firebaseConfig";
 
+type MemberStatus = "unregister" | "pending" | "register";
+type SortField = "name" | "idx";
+type SortDirection = "asc" | "desc";
+type ActiveSelector = "ministry" | "coreGroup" | "status" | null;
+
 type Member = {
   id: string;
   name: string;
+  fullName?: string;
   password?: string;
   contact?: string;
   civilStatus?: string;
   ministry: string[];
   coreGroup: string[];
+  status: MemberStatus;
   role?: string;
   idx?: number;
 };
@@ -38,47 +44,65 @@ type OptionItem = {
   name: string;
 };
 
-type SortBy = "name-asc" | "name-desc" | "idx";
-
-type ActiveSelector = "ministry" | "coreGroup" | null;
-
 const normalizeArray = (value: unknown) => {
   if (Array.isArray(value)) return value.map((x) => String(x).trim()).filter(Boolean);
   if (typeof value === "string" && value.trim()) return [value.trim()];
   return [];
 };
 
-const formatList = (items?: string[]) => {
-  if (!items || items.length === 0) return "";
-  if (items.length <= 2) return items.join(", ");
-  return `${items.slice(0, 2).join(", ")} +${items.length - 2}`;
+const normalizeStatus = (value: unknown): MemberStatus => {
+  const status = String(value ?? "").trim().toLowerCase();
+  if (status === "unregister" || status === "pending" || status === "register") return status;
+  return "unregister";
 };
 
-const joinLabel = (items: string[]) => {
-  if (items.length === 0) return "";
-  if (items.length <= 2) return items.join(", ");
-  return `${items.slice(0, 2).join(", ")} +${items.length - 2}`;
+const normalizeNA = (value: unknown) => {
+  const text = String(value ?? "").trim();
+  if (!text || text.toLowerCase() === "na") return "NA";
+  return text;
 };
 
 const emptyForm = {
   name: "",
+  fullName: "",
   password: "",
   contact: "",
   civilStatus: "",
 };
 
+const statusLabel: Record<MemberStatus, string> = {
+  unregister: "Unregister",
+  pending: "Pending",
+  register: "Register",
+};
+
+const statusColor: Record<MemberStatus, string> = {
+  unregister: "#DC2626",
+  pending: "#F59E0B",
+  register: "#16A34A",
+};
+
+const statusOptions: { id: MemberStatus; name: string }[] = [
+  { id: "unregister", name: "Unregister" },
+  { id: "pending", name: "Pending" },
+  { id: "register", name: "Register" },
+];
+
 export default function ManageMembers() {
   const router = useRouter();
+  const optionsLoadPromiseRef = useRef<Promise<void> | null>(null);
 
   const [items, setItems] = useState<Member[]>([]);
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<SortBy>("name-asc");
+  const [sortField, setSortField] = useState<SortField>("name");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [openId, setOpenId] = useState<string | null>(null);
   const [sortOpen, setSortOpen] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [selectedStatus, setSelectedStatus] = useState<MemberStatus>("unregister");
 
   const [ministryOptions, setMinistryOptions] = useState<OptionItem[]>([]);
   const [coreGroupOptions, setCoreGroupOptions] = useState<OptionItem[]>([]);
@@ -99,11 +123,13 @@ export default function ManageMembers() {
           return {
             id: d.id,
             name: String(data?.name ?? ""),
+            fullName: String(data?.fullName ?? ""),
             password: String(data?.password ?? ""),
-            contact: String(data?.contact ?? ""),
-            civilStatus: String(data?.civilStatus ?? ""),
+            contact: normalizeNA(data?.contact),
+            civilStatus: normalizeNA(data?.civilStatus),
             ministry: normalizeArray(data?.ministry),
-            coreGroup: normalizeArray(data?.coreGroup ?? data?.coreGroups),
+            coreGroup: normalizeArray(data?.coreGroup),
+            status: normalizeStatus(data?.status),
             role: String(data?.role ?? ""),
             idx: typeof data?.idx === "number" ? data.idx : undefined,
           };
@@ -147,35 +173,38 @@ export default function ManageMembers() {
 
   useEffect(() => {
     load();
-    loadOptions();
+    optionsLoadPromiseRef.current = loadOptions();
   }, []);
 
   const list = useMemo(() => {
     const q = search.toLowerCase().trim();
 
     const filtered = [...items].filter((x) =>
-      `${x.name} ${x.contact ?? ""} ${x.civilStatus ?? ""} ${x.ministry?.join(" ") ?? ""} ${
-        x.coreGroup?.join(" ") ?? ""
-      } ${x.idx ?? ""}`
+      `${x.name} ${x.fullName ?? ""} ${x.contact ?? ""} ${x.civilStatus ?? ""} ${
+        x.ministry?.join(" ") ?? ""
+      } ${x.coreGroup?.join(" ")} ${x.status ?? ""} ${x.idx ?? ""}`
         .toLowerCase()
         .includes(q)
     );
 
-    if (sortBy === "name-asc") {
-      filtered.sort((a, b) => a.name.localeCompare(b.name));
-    } else if (sortBy === "name-desc") {
-      filtered.sort((a, b) => b.name.localeCompare(a.name));
-    } else {
-      filtered.sort((a, b) => {
-        const aIdx = typeof a.idx === "number" ? a.idx : Number.MAX_SAFE_INTEGER;
-        const bIdx = typeof b.idx === "number" ? b.idx : Number.MAX_SAFE_INTEGER;
-        if (aIdx !== bIdx) return aIdx - bIdx;
-        return a.name.localeCompare(b.name);
-      });
-    }
+    filtered.sort((a, b) => {
+      if (sortField === "name") {
+        const left = (a.fullName || a.name).localeCompare(b.fullName || b.name);
+        return sortDirection === "asc" ? left : -left;
+      }
+
+      const aIdx = typeof a.idx === "number" ? a.idx : Number.MAX_SAFE_INTEGER;
+      const bIdx = typeof b.idx === "number" ? b.idx : Number.MAX_SAFE_INTEGER;
+      if (aIdx !== bIdx) {
+        return sortDirection === "asc" ? aIdx - bIdx : bIdx - aIdx;
+      }
+
+      const left = (a.fullName || a.name).localeCompare(b.fullName || b.name);
+      return sortDirection === "asc" ? left : -left;
+    });
 
     return filtered;
-  }, [items, search, sortBy]);
+  }, [items, search, sortField, sortDirection]);
 
   const remove = (id: string) => {
     Alert.alert("Delete", "Remove this member?", [
@@ -195,13 +224,21 @@ export default function ManageMembers() {
     setOpenId((current) => (current === id ? null : id));
   };
 
-  const sortLabel = sortBy === "name-asc" ? "A-Z" : sortBy === "name-desc" ? "Z-A" : "Idx";
+  const sortLabel =
+    sortField === "name"
+      ? sortDirection === "asc"
+        ? "A-Z"
+        : "Z-A"
+      : sortDirection === "asc"
+        ? "Idx ↑"
+        : "Idx ↓";
 
   const openAddMember = () => {
     setEditingId(null);
     setForm(emptyForm);
     setSelectedMinistries([]);
     setSelectedCoreGroups([]);
+    setSelectedStatus("unregister");
     setFormOpen(true);
   };
 
@@ -209,16 +246,22 @@ export default function ManageMembers() {
     setEditingId(item.id);
     setForm({
       name: item.name ?? "",
+      fullName: item.fullName ?? "",
       password: item.password ?? "",
-      contact: item.contact ?? "",
-      civilStatus: item.civilStatus ?? "",
+      contact: item.contact && item.contact !== "NA" ? item.contact : "",
+      civilStatus: item.civilStatus && item.civilStatus !== "NA" ? item.civilStatus : "",
     });
     setSelectedMinistries(item.ministry ?? []);
     setSelectedCoreGroups(item.coreGroup ?? []);
+    setSelectedStatus(item.status ?? "unregister");
     setFormOpen(true);
   };
 
-  const openSelector = (kind: ActiveSelector) => {
+  const openSelector = async (kind: ActiveSelector) => {
+    if (kind !== "status" && loadingOptions && optionsLoadPromiseRef.current) {
+      await optionsLoadPromiseRef.current;
+    }
+
     setActiveSelector(kind);
     setSelectorOpen(true);
   };
@@ -235,31 +278,30 @@ export default function ManageMembers() {
       setSelectedCoreGroups((prev) =>
         prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]
       );
+      return;
+    }
+
+    if (kind === "status") {
+      setSelectedStatus(value as MemberStatus);
     }
   };
 
   const save = async () => {
-    if (
-      !form.name.trim() ||
-      !form.password.trim() ||
-      !form.contact.trim() ||
-      !form.civilStatus.trim() ||
-      selectedMinistries.length === 0 ||
-      selectedCoreGroups.length === 0
-    ) {
-      return Alert.alert("Error", "Fill all fields");
+    if (!form.name.trim() || !form.fullName.trim() || !form.password.trim()) {
+      return Alert.alert("Error", "Name, Full Name, and Password are required");
     }
 
     setSaving(true);
     try {
       const data = {
         name: form.name.trim(),
+        fullName: form.fullName.trim(),
         password: form.password.trim(),
-        contact: form.contact.trim(),
-        civilStatus: form.civilStatus.trim(),
+        contact: normalizeNA(form.contact),
+        civilStatus: normalizeNA(form.civilStatus),
         ministry: selectedMinistries,
         coreGroup: selectedCoreGroups,
-        coreGroups: selectedCoreGroups,
+        status: selectedStatus,
         role: "member",
       };
 
@@ -274,6 +316,7 @@ export default function ManageMembers() {
       setForm(emptyForm);
       setSelectedMinistries([]);
       setSelectedCoreGroups([]);
+      setSelectedStatus("unregister");
       await load();
     } catch {
       Alert.alert("Error", "Save failed");
@@ -282,113 +325,178 @@ export default function ManageMembers() {
     }
   };
 
-  const activeOptions = activeSelector === "ministry" ? ministryOptions : coreGroupOptions;
-  const activeTitle = activeSelector === "ministry" ? "Select Ministry" : "Select Core Groups";
+  const activeOptions =
+    activeSelector === "ministry"
+      ? ministryOptions
+      : activeSelector === "coreGroup"
+        ? coreGroupOptions
+        : statusOptions;
+
+  const activeTitle =
+    activeSelector === "ministry"
+      ? "Select Ministry"
+      : activeSelector === "coreGroup"
+        ? "Select Core Group"
+        : "Select Status";
+
   const activeSelected =
-    activeSelector === "ministry" ? selectedMinistries : selectedCoreGroups;
+    activeSelector === "ministry"
+      ? selectedMinistries
+      : activeSelector === "coreGroup"
+        ? selectedCoreGroups
+        : [selectedStatus];
 
   return (
-    <View style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Manage Members</Text>
+    <View className="flex-1 bg-slate-50">
+      <ScrollView contentContainerClassName="gap-3 px-5 pb-[110px] pt-5">
+        <Text className="text-2xl font-extrabold text-slate-900">Manage Members</Text>
 
-        <View style={styles.searchWrap}>
+        <View className="h-[50px] flex-row items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-4">
           <MaterialIcons name="search" size={20} color="#6B7280" />
           <TextInput
             value={search}
             onChangeText={setSearch}
             placeholder="Search members"
             placeholderTextColor="#9CA3AF"
-            style={styles.searchInput}
+            className="flex-1 text-[15px] text-slate-900"
           />
         </View>
 
-        <Pressable
-          onPress={() => setSortOpen(true)}
-          style={({ pressed }) => [styles.sortButton, pressed && styles.pressed]}
-        >
-          <MaterialIcons name="sort" size={20} color="#111827" />
-          <Text style={styles.sortButtonText}>Sort: {sortLabel}</Text>
-          <MaterialIcons name="arrow-drop-down" size={22} color="#111827" />
-        </Pressable>
+        <View className="flex-row items-center gap-2 self-start">
+          <Pressable
+            onPress={() => setSortOpen(true)}
+            className="h-[46px] flex-row items-center gap-1.5 rounded-[14px] bg-slate-200 px-4"
+            style={({ pressed }) =>
+              pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+            }
+          >
+            <MaterialIcons name="sort" size={20} color="#111827" />
+            <Text className="text-sm font-bold text-slate-900">{sortLabel}</Text>
+            <MaterialIcons name="arrow-drop-down" size={22} color="#111827" />
+          </Pressable>
 
-        <View style={styles.list}>
+          <Pressable
+            onPress={() =>
+              setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))
+            }
+            className="h-[46px] w-[46px] items-center justify-center rounded-[14px] bg-slate-200"
+            style={({ pressed }) =>
+              pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+            }
+          >
+            <MaterialIcons
+              name={sortDirection === "asc" ? "arrow-upward" : "arrow-downward"}
+              size={22}
+              color="#111827"
+            />
+          </Pressable>
+        </View>
+
+        <View className="gap-3">
           {list.map((item) => {
             const isOpen = openId === item.id;
+            const dotColor = statusColor[item.status ?? "unregister"];
+            const displayName = item.fullName?.trim() || item.name;
 
             return (
-              <View key={item.id} style={styles.card}>
-                <Pressable
-                  onPress={() => toggleOpen(item.id)}
-                  style={({ pressed }) => [styles.memberHeader, pressed && styles.memberHeaderPressed]}
-                >
-                  <View style={styles.avatar}>
-                    <MaterialIcons name="person" size={24} color="#9CA3AF" />
-                  </View>
+              <View
+                key={item.id}
+                className="overflow-hidden rounded-[18px] border border-slate-200 bg-white"
+              >
+                <View className="flex-row items-center gap-3 p-3.5">
+                  <Pressable
+                    onPress={() => toggleOpen(item.id)}
+                    className="flex-1 flex-row items-center gap-3"
+                    style={({ pressed }) =>
+                      pressed ? { backgroundColor: "#F9FAFB" } : undefined
+                    }
+                  >
+                    <View className="h-[46px] w-[46px] items-center justify-center rounded-full bg-slate-100">
+                      <MaterialIcons name="person" size={24} color="#9CA3AF" />
+                    </View>
 
-                  <Text style={styles.memberName}>{item.name}</Text>
-
-                  <MaterialIcons
-                    name={isOpen ? "expand-less" : "expand-more"}
-                    size={24}
-                    color="#6B7280"
-                  />
-                </Pressable>
-
-                {isOpen && (
-                  <View style={styles.details}>
-                    <DetailRow label="Contact" value={item.contact} />
-                    <DetailRow label="Civil Status" value={item.civilStatus} />
-                    <DetailRow label="Ministry" value={formatList(item.ministry)} />
-                    <DetailRow label="Core Groups" value={formatList(item.coreGroup)} />
-                    <DetailRow
-                      label="Idx"
-                      value={typeof item.idx === "number" ? String(item.idx) : undefined}
+                    <View
+                      className="h-3 w-3 rounded-full"
+                      style={{ backgroundColor: dotColor }}
                     />
 
-                    <View style={styles.iconActions}>
-                      <Pressable
-                        onPress={() => openEditMember(item)}
-                        style={({ pressed }) => [
-                          styles.actionButton,
-                          styles.actionButtonBlue,
-                          pressed && styles.pressed,
-                        ]}
-                      >
-                        <MaterialIcons name="edit" size={18} color="#fff" />
-                        <Text style={styles.actionButtonText}>Edit</Text>
-                      </Pressable>
+                    <Text className="flex-1 text-base font-bold text-slate-900">
+                      {displayName}
+                    </Text>
+                  </Pressable>
 
-                      <Pressable
-                        onPress={() =>
-                          router.push({
-                            pathname: "./member-tasks",
-                            params: { id: item.id, name: item.name },
-                          })
-                        }
-                        style={({ pressed }) => [
-                          styles.actionButton,
-                          styles.actionButtonPurple,
-                          pressed && styles.pressed,
-                        ]}
-                      >
-                        <MaterialIcons name="assignment" size={18} color="#fff" />
-                        <Text style={styles.actionButtonText}>Show Task</Text>
-                      </Pressable>
+                  <Pressable
+                    onPress={() => openEditMember(item)}
+                    hitSlop={10}
+                    className="items-center justify-center px-1"
+                    style={({ pressed }) =>
+                      pressed ? { opacity: 0.6, transform: [{ scale: 0.96 }] } : undefined
+                    }
+                  >
+                    <MaterialIcons name="edit" size={20} color="#2563EB" />
+                  </Pressable>
 
+                  <Pressable
+                    onPress={() =>
+                      router.push({
+                        pathname: "/task-board",
+                        params: {
+                          memberId: item.id,
+                          memberName: displayName,
+                          id: item.id,
+                          name: displayName,
+                          userRole: "admin",
+                        },
+                      })
+                    }
+                    hitSlop={10}
+                    className="items-center justify-center px-1"
+                    style={({ pressed }) =>
+                      pressed ? { opacity: 0.6, transform: [{ scale: 0.96 }] } : undefined
+                    }
+                  >
+                    <MaterialIcons name="assignment" size={20} color="#7C3AED" />
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => toggleOpen(item.id)}
+                    hitSlop={10}
+                    className="items-center justify-center px-1"
+                    style={({ pressed }) =>
+                      pressed ? { opacity: 0.6, transform: [{ scale: 0.96 }] } : undefined
+                    }
+                  >
+                    <MaterialIcons
+                      name={isOpen ? "expand-less" : "expand-more"}
+                      size={24}
+                      color="#6B7280"
+                    />
+                  </Pressable>
+                </View>
+
+                {isOpen ? (
+                  <View className="gap-2.5 px-3.5 pb-3.5">
+                    <DetailRow label="Name" value={item.name} />
+                    <DetailRow label="Full Name" value={item.fullName} />
+                    <DetailRow label="Contact" value={item.contact} />
+                    <DetailRow label="Civil Status" value={item.civilStatus} />
+                    <DetailRow label="Status" value={statusLabel[item.status ?? "unregister"]} />
+                    <DetailRow label="Ministry" value={formatList(item.ministry)} />
+                    <DetailRow label="Core Group" value={formatList(item.coreGroup)} />
+
+                    <View className="flex-row flex-wrap justify-end gap-2.5 pt-0.5">
                       <Pressable
                         onPress={() => remove(item.id)}
-                        style={({ pressed }) => [
-                          styles.actionButton,
-                          styles.actionButtonRed,
-                          pressed && styles.pressed,
-                        ]}
+                        className="h-10 flex-row items-center gap-1.5 rounded-xl bg-red-600 px-3"
+                        style={({ pressed }) =>
+                          pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                        }
                       >
                         <MaterialIcons name="delete" size={18} color="#fff" />
                       </Pressable>
                     </View>
                   </View>
-                )}
+                ) : null}
               </View>
             );
           })}
@@ -397,7 +505,18 @@ export default function ManageMembers() {
 
       <Pressable
         onPress={openAddMember}
-        style={({ pressed }) => [styles.fab, pressed && styles.pressed]}
+        className="absolute bottom-5 right-5 h-[58px] w-[58px] items-center justify-center rounded-full bg-blue-600"
+        style={({ pressed }) => [
+          pressed
+            ? { opacity: 0.85, transform: [{ scale: 0.98 }] }
+            : {
+                shadowColor: "#000",
+                shadowOpacity: 0.2,
+                shadowRadius: 10,
+                shadowOffset: { width: 0, height: 4 },
+                elevation: 6,
+              },
+        ]}
       >
         <MaterialIcons name="person-add-alt-1" size={24} color="#fff" />
       </Pressable>
@@ -408,20 +527,29 @@ export default function ManageMembers() {
         animationType="slide"
         onRequestClose={() => setFormOpen(false)}
       >
-        <Pressable style={styles.bottomBackdrop} onPress={() => setFormOpen(false)}>
-          <Pressable style={styles.bottomSheet} onPress={() => {}}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>{editingId ? "Edit Member" : "Add Member"}</Text>
+        <Pressable className="flex-1 justify-end bg-black/40" onPress={() => setFormOpen(false)}>
+          <Pressable
+            className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2"
+            onPress={() => {}}
+          >
+            <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
+            <Text className="mb-3 text-[22px] font-extrabold text-slate-900">
+              {editingId ? "Edit Member" : "Add Member"}
+            </Text>
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.sheetContent}
-            >
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="gap-3 pb-2">
               <TextInput
                 value={form.name}
                 onChangeText={(value) => setForm((prev) => ({ ...prev, name: value }))}
                 placeholder="Name"
-                style={styles.input}
+                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
+              />
+
+              <TextInput
+                value={form.fullName}
+                onChangeText={(value) => setForm((prev) => ({ ...prev, fullName: value }))}
+                placeholder="Full Name"
+                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
               />
 
               <TextInput
@@ -429,63 +557,83 @@ export default function ManageMembers() {
                 onChangeText={(value) => setForm((prev) => ({ ...prev, password: value }))}
                 placeholder="Password"
                 secureTextEntry
-                style={styles.input}
+                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
               />
 
               <TextInput
                 value={form.contact}
                 onChangeText={(value) => setForm((prev) => ({ ...prev, contact: value }))}
                 placeholder="Contact"
-                style={styles.input}
+                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
               />
 
               <TextInput
                 value={form.civilStatus}
                 onChangeText={(value) => setForm((prev) => ({ ...prev, civilStatus: value }))}
                 placeholder="Civil Status"
-                style={styles.input}
+                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
               />
 
               <Pressable
-                onPress={() => openSelector("ministry")}
-                style={({ pressed }) => [styles.selectButton, pressed && styles.pressed]}
+                onPress={() => openSelector("status")}
+                className="gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                style={({ pressed }) =>
+                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                }
               >
-                <Text style={styles.selectLabel}>Ministry</Text>
-                <Text style={styles.selectValue}>
-                  {selectedMinistries.length ? joinLabel(selectedMinistries) : "Select Ministry"}
+                <Text className="text-xs font-bold uppercase text-slate-500">Status</Text>
+                <Text className="text-[15px] font-bold text-slate-900">
+                  {statusLabel[selectedStatus]}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => openSelector("ministry")}
+                className="gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                style={({ pressed }) =>
+                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                }
+              >
+                <Text className="text-xs font-bold uppercase text-slate-500">Ministry</Text>
+                <Text className="text-[15px] font-bold text-slate-900">
+                  {selectedMinistries.length ? selectedMinistries.join(", ") : "NA"}
                 </Text>
               </Pressable>
 
               <Pressable
                 onPress={() => openSelector("coreGroup")}
-                style={({ pressed }) => [styles.selectButton, pressed && styles.pressed]}
+                className="gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                style={({ pressed }) =>
+                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                }
               >
-                <Text style={styles.selectLabel}>Core Groups</Text>
-                <Text style={styles.selectValue}>
-                  {selectedCoreGroups.length
-                    ? joinLabel(selectedCoreGroups)
-                    : "Select Core Groups"}
+                <Text className="text-xs font-bold uppercase text-slate-500">Core Group</Text>
+                <Text className="text-[15px] font-bold text-slate-900">
+                  {selectedCoreGroups.length ? selectedCoreGroups.join(", ") : "NA"}
                 </Text>
               </Pressable>
 
-              <View style={styles.sheetActions}>
+              <View className="flex-row justify-end gap-2.5 pt-1">
                 <Pressable
                   onPress={() => setFormOpen(false)}
-                  style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+                  className="rounded-[14px] bg-slate-200 px-4 py-3"
+                  style={({ pressed }) =>
+                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                  }
                 >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                  <Text className="font-extrabold text-slate-900">Cancel</Text>
                 </Pressable>
 
                 <Pressable
                   onPress={save}
                   disabled={saving}
+                  className="rounded-[14px] bg-slate-900 px-4 py-3"
                   style={({ pressed }) => [
-                    styles.saveButton,
-                    pressed && styles.pressed,
-                    saving && { opacity: 0.7 },
+                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined,
+                    saving ? { opacity: 0.7 } : undefined,
                   ]}
                 >
-                  <Text style={styles.saveButtonText}>
+                  <Text className="font-extrabold text-white">
                     {saving ? "Saving..." : editingId ? "Update Member" : "Add Member"}
                   </Text>
                 </Pressable>
@@ -501,41 +649,51 @@ export default function ManageMembers() {
         animationType="slide"
         onRequestClose={() => setSelectorOpen(false)}
       >
-        <Pressable style={styles.bottomBackdrop} onPress={() => setSelectorOpen(false)}>
-          <Pressable style={styles.selectorSheet} onPress={() => {}}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>{activeTitle}</Text>
+        <Pressable className="flex-1 justify-end bg-black/40" onPress={() => setSelectorOpen(false)}>
+          <Pressable
+            className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2"
+            onPress={() => {}}
+          >
+            <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
+            <Text className="mb-3 text-[22px] font-extrabold text-slate-900">{activeTitle}</Text>
 
             <ScrollView
-              style={{ maxHeight: 430 }}
-              contentContainerStyle={{ gap: 10, paddingBottom: 12 }}
+              className="max-h-[430px]"
+              contentContainerClassName="gap-2.5 pb-3"
               showsVerticalScrollIndicator={false}
             >
-              {loadingOptions ? (
-                <View style={{ paddingVertical: 20 }}>
-                  <Text style={{ textAlign: "center", color: "#6B7280" }}>Loading...</Text>
+              {loadingOptions && (activeSelector === "ministry" || activeSelector === "coreGroup") ? (
+                <View className="py-5">
+                  <Text className="text-center text-slate-500">Loading...</Text>
                 </View>
               ) : activeOptions.length === 0 ? (
-                <Text style={{ textAlign: "center", color: "#6B7280", paddingVertical: 20 }}>
-                  No options available
-                </Text>
+                <Text className="py-5 text-center text-slate-500">No options available</Text>
               ) : (
                 activeOptions.map((item) => {
-                  const active = activeSelected.includes(item.name);
+                  const isStatus = activeSelector === "status";
+                  const selected = isStatus
+                    ? selectedStatus === item.id
+                    : activeSelected.includes(item.name);
+
                   return (
                     <Pressable
                       key={item.id}
-                      onPress={() => toggleSelected(item.name, activeSelector)}
-                      style={({ pressed }) => [
-                        styles.optionRow,
-                        active && styles.optionRowActive,
-                        pressed && styles.pressedOption,
-                      ]}
+                      onPress={() => toggleSelected(isStatus ? item.id : item.name, activeSelector)}
+                      className={`min-h-[48px] flex-row items-center gap-3 rounded-[14px] px-4 ${
+                        selected ? "bg-blue-50" : "bg-slate-50"
+                      }`}
+                      style={({ pressed }) =>
+                        pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                      }
                     >
-                      <View style={styles.optionCheck}>
-                        {active ? <Text style={styles.optionCheckText}>✓</Text> : null}
+                      <View className="h-[22px] w-[22px] items-center justify-center rounded-md border border-slate-400 bg-white">
+                        {selected ? (
+                          <Text className="text-sm font-extrabold text-emerald-600">✓</Text>
+                        ) : null}
                       </View>
-                      <Text style={styles.optionText}>{item.name}</Text>
+                      <Text className="flex-1 text-[15px] font-bold text-slate-900">
+                        {item.name}
+                      </Text>
                     </Pressable>
                   );
                 })
@@ -544,9 +702,12 @@ export default function ManageMembers() {
 
             <Pressable
               onPress={() => setSelectorOpen(false)}
-              style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
+              className="mt-3 self-end rounded-[14px] bg-slate-200 px-4 py-3"
+              style={({ pressed }) =>
+                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+              }
             >
-              <Text style={styles.closeButtonText}>Close</Text>
+              <Text className="font-extrabold text-slate-900">Close</Text>
             </Pressable>
           </Pressable>
         </Pressable>
@@ -558,53 +719,56 @@ export default function ManageMembers() {
         animationType="fade"
         onRequestClose={() => setSortOpen(false)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setSortOpen(false)}>
-          <Pressable style={styles.modalCard} onPress={() => {}}>
-            <Text style={styles.modalTitle}>Sort by</Text>
+        <Pressable className="flex-1 bg-black/20 pt-[180px] pl-5" onPress={() => setSortOpen(false)}>
+          <Pressable
+            className="w-[170px] overflow-hidden rounded-2xl border border-slate-200 bg-white"
+            onPress={() => {}}
+            style={{
+              shadowColor: "#000",
+              shadowOpacity: 0.14,
+              shadowRadius: 12,
+              shadowOffset: { width: 0, height: 6 },
+              elevation: 8,
+            }}
+          >
+            <Text className="px-4 pb-2 pt-4 text-[13px] font-extrabold text-slate-900">
+              Sort by
+            </Text>
 
             <Pressable
               onPress={() => {
-                setSortBy("name-asc");
+                setSortField("name");
                 setSortOpen(false);
               }}
-              style={({ pressed }) => [
-                styles.optionRow,
-                sortBy === "name-asc" && styles.optionRowActive,
-                pressed && styles.pressedOption,
-              ]}
+              className={`min-h-[48px] flex-row items-center justify-between rounded-[14px] px-4 ${
+                sortField === "name" ? "bg-blue-50" : "bg-slate-50"
+              }`}
+              style={({ pressed }) =>
+                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+              }
             >
-              <Text style={styles.optionText}>A-Z</Text>
-              {sortBy === "name-asc" && <MaterialIcons name="check" size={18} color="#2563EB" />}
+              <Text className="text-[15px] font-bold text-slate-900">A-Z</Text>
+              {sortField === "name" ? (
+                <MaterialIcons name="check" size={18} color="#2563EB" />
+              ) : null}
             </Pressable>
 
             <Pressable
               onPress={() => {
-                setSortBy("name-desc");
+                setSortField("idx");
                 setSortOpen(false);
               }}
-              style={({ pressed }) => [
-                styles.optionRow,
-                sortBy === "name-desc" && styles.optionRowActive,
-                pressed && styles.pressedOption,
-              ]}
+              className={`min-h-[48px] flex-row items-center justify-between rounded-[14px] px-4 ${
+                sortField === "idx" ? "bg-blue-50" : "bg-slate-50"
+              }`}
+              style={({ pressed }) =>
+                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+              }
             >
-              <Text style={styles.optionText}>Z-A</Text>
-              {sortBy === "name-desc" && <MaterialIcons name="check" size={18} color="#2563EB" />}
-            </Pressable>
-
-            <Pressable
-              onPress={() => {
-                setSortBy("idx");
-                setSortOpen(false);
-              }}
-              style={({ pressed }) => [
-                styles.optionRow,
-                sortBy === "idx" && styles.optionRowActive,
-                pressed && styles.pressedOption,
-              ]}
-            >
-              <Text style={styles.optionText}>Idx</Text>
-              {sortBy === "idx" && <MaterialIcons name="check" size={18} color="#2563EB" />}
+              <Text className="text-[15px] font-bold text-slate-900">Idx</Text>
+              {sortField === "idx" ? (
+                <MaterialIcons name="check" size={18} color="#2563EB" />
+              ) : null}
             </Pressable>
           </Pressable>
         </Pressable>
@@ -613,346 +777,21 @@ export default function ManageMembers() {
   );
 }
 
-function DetailRow({
-  label,
-  value,
-}: {
-  label: string;
-  value?: string;
-}) {
+function formatList(items?: string[]) {
+  if (!items || items.length === 0) return "NA";
+  if (items.length <= 2) return items.join(", ");
+  return `${items.slice(0, 2).join(", ")} +${items.length - 2}`;
+}
+
+function DetailRow({ label, value }: { label: string; value?: string }) {
   if (!value) return null;
 
   return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
+    <View className="gap-1 rounded-[12px] bg-slate-50 p-3">
+      <Text className="text-xs font-semibold uppercase tracking-[0.4px] text-slate-500">
+        {label}
+      </Text>
+      <Text className="text-[15px] font-semibold text-slate-900">{value}</Text>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: "#F7F8FA",
-  },
-  container: {
-    padding: 20,
-    paddingBottom: 110,
-    gap: 14,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  searchWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    height: 50,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 15,
-    color: "#111827",
-  },
-  sortButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: 6,
-    paddingHorizontal: 16,
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: "#E5E7EB",
-  },
-  sortButtonText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  list: {
-    gap: 12,
-  },
-  card: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 18,
-    backgroundColor: "#fff",
-    overflow: "hidden",
-  },
-  memberHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    padding: 14,
-  },
-  memberHeaderPressed: {
-    backgroundColor: "#F9FAFB",
-  },
-  avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  memberName: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  details: {
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-    gap: 10,
-  },
-  detailRow: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: 12,
-    padding: 12,
-    gap: 4,
-  },
-  detailLabel: {
-    fontSize: 12,
-    color: "#6B7280",
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
-  detailValue: {
-    fontSize: 15,
-    color: "#111827",
-    fontWeight: "600",
-  },
-  iconActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    flexWrap: "wrap",
-    gap: 10,
-    paddingTop: 2,
-  },
-  actionButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    height: 40,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-  },
-  actionButtonBlue: {
-    backgroundColor: "#2563EB",
-  },
-  actionButtonPurple: {
-    backgroundColor: "#7C3AED",
-  },
-  actionButtonRed: {
-    backgroundColor: "#DC2626",
-  },
-  actionButtonText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  fab: {
-    position: "absolute",
-    right: 20,
-    bottom: 20,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#2563EB",
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  bottomBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.38)",
-    justifyContent: "flex-end",
-  },
-  bottomSheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 18,
-    maxHeight: "90%",
-  },
-  selectorSheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 18,
-    maxHeight: "90%",
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 44,
-    height: 5,
-    borderRadius: 99,
-    backgroundColor: "#D1D5DB",
-    marginBottom: 14,
-  },
-  sheetTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#111827",
-    marginBottom: 14,
-  },
-  sheetContent: {
-    gap: 12,
-    paddingBottom: 10,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: "#111827",
-    backgroundColor: "#fff",
-  },
-  selectButton: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: "#fff",
-    gap: 4,
-  },
-  selectLabel: {
-    fontSize: 12,
-    color: "#6B7280",
-    fontWeight: "700",
-    textTransform: "uppercase",
-  },
-  selectValue: {
-    fontSize: 15,
-    color: "#111827",
-    fontWeight: "700",
-  },
-  sheetActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 10,
-    paddingTop: 4,
-  },
-  cancelButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#E5E7EB",
-  },
-  cancelButtonText: {
-    fontWeight: "800",
-    color: "#111827",
-  },
-  saveButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#111827",
-  },
-  saveButtonText: {
-    fontWeight: "800",
-    color: "#fff",
-  },
-  optionRow: {
-    minHeight: 48,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    borderRadius: 14,
-    backgroundColor: "#F9FAFB",
-  },
-  optionRowActive: {
-    backgroundColor: "#EFF6FF",
-  },
-  optionCheck: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#9CA3AF",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fff",
-  },
-  optionCheckText: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: "#16A34A",
-  },
-  optionText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111827",
-    flex: 1,
-  },
-  closeButton: {
-    marginTop: 12,
-    alignSelf: "flex-end",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#E5E7EB",
-  },
-  closeButtonText: {
-    fontWeight: "800",
-    color: "#111827",
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.18)",
-    justifyContent: "flex-start",
-    alignItems: "flex-start",
-    paddingTop: 180,
-    paddingLeft: 20,
-  },
-  modalCard: {
-    width: 170,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOpacity: 0.14,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
-  },
-  modalTitle: {
-    paddingHorizontal: 14,
-    paddingTop: 14,
-    paddingBottom: 10,
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  pressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
-  },
-  pressedOption: {
-    backgroundColor: "#F3F4F6",
-  },
-});
