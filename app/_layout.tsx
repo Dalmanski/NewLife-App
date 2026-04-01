@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import "../global.css";
 
 export default function RootLayout() {
   const router = useRouter();

@@ -3,6 +3,9 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 
+collection_name = "users"
+document_id = "2"
+
 # Path to your service account JSON
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 cred_path = os.path.join(
@@ -17,9 +20,6 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
-
-collection_name = "ministries"
-document_id = "3cI46jRdJOL0AzeXk0qW"
 
 doc_ref = db.collection(collection_name).document(document_id)
 doc = doc_ref.get()

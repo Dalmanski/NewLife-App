@@ -8,7 +8,6 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -22,12 +21,16 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
+    if (loading) return;
+
     if (!name.trim() || !password.trim()) {
-      return Alert.alert("Error", "Enter name and password");
+      Alert.alert("Error", "Enter name and password");
+      return;
     }
 
     try {
       setLoading(true);
+
       const q = query(
         collection(db, "users"),
         where("name", "==", name.trim()),
@@ -36,7 +39,8 @@ export default function Login() {
       const snap = await getDocs(q);
 
       if (snap.empty) {
-        return Alert.alert("Error", "Invalid credentials");
+        Alert.alert("Error", "Invalid credentials");
+        return;
       }
 
       router.replace({ pathname: "/main", params: { id: snap.docs[0].id } });
@@ -48,180 +52,82 @@ export default function Login() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView className="flex-1 bg-[#F4F7FB]">
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.container}
+        className="flex-1 justify-center px-5"
       >
-        <View style={styles.bgCircleTop} />
-        <View style={styles.bgCircleBottom} />
+        <View className="absolute -right-14 -top-16 h-56 w-56 rounded-full bg-[#DDEBFF] opacity-90" />
+        <View className="absolute -bottom-12 -left-12 h-44 w-44 rounded-full bg-[#E8F4FF] opacity-90" />
 
-        <View style={styles.card}>
-          <View style={styles.brandWrap}>
-            <View style={styles.logoCircle}>
-              <Text style={styles.logoText}>NL</Text>
+        <View className="rounded-[24px] bg-white p-6 shadow-lg shadow-black/10">
+          <View className="mb-6 items-center">
+            <View className="mb-3 h-[72px] w-[72px] items-center justify-center rounded-full bg-blue-600">
+              <Text className="text-[22px] font-extrabold tracking-[1px] text-white">
+                NL
+              </Text>
             </View>
-            <Text style={styles.brandTitle}>NewLife Danao</Text>
-            <Text style={styles.brandSubtitle}>App Login</Text>
+            <Text className="text-2xl font-extrabold text-gray-900">
+              NewLife Danao
+            </Text>
+            <Text className="mt-1.5 text-sm text-gray-500">App Login</Text>
           </View>
 
-          <View style={styles.form}>
-            <Text style={styles.label}>Name</Text>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="Enter your name"
-              placeholderTextColor="#9AA4B2"
-              style={styles.input}
-              autoCapitalize="words"
-              returnKeyType="next"
-            />
+          <View className="gap-3">
+            <View>
+              <Text className="mb-2 text-sm font-semibold text-gray-700">
+                Name
+              </Text>
+              <TextInput
+                value={name}
+                onChangeText={setName}
+                placeholder="Enter your name"
+                placeholderTextColor="#9AA4B2"
+                className="rounded-[14px] border border-[#D7DEE8] bg-[#F9FBFD] px-4 py-[14px] text-base text-gray-900"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="off"
+                returnKeyType="next"
+              />
+            </View>
 
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Enter your password"
-              placeholderTextColor="#9AA4B2"
-              secureTextEntry
-              style={styles.input}
-              returnKeyType="done"
-              onSubmitEditing={handleLogin}
-            />
+            <View>
+              <Text className="mb-2 text-sm font-semibold text-gray-700">
+                Password
+              </Text>
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Enter your password"
+                placeholderTextColor="#9AA4B2"
+                secureTextEntry
+                className="rounded-[14px] border border-[#D7DEE8] bg-[#F9FBFD] px-4 py-[14px] text-base text-gray-900"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="off"
+                returnKeyType="done"
+                onSubmitEditing={handleLogin}
+              />
+            </View>
 
             <Pressable
               onPress={handleLogin}
-              style={({ pressed }) => [
-                styles.button,
-                pressed && { opacity: 0.85, transform: [{ scale: 0.99 }] },
-              ]}
               disabled={loading}
+              className="mt-2 items-center justify-center rounded-[14px] bg-blue-600 py-[15px] shadow-md shadow-blue-600/25 active:scale-[0.99] disabled:opacity-70"
             >
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.buttonText}>Login</Text>
+                <Text className="text-base font-bold text-white">Login</Text>
               )}
             </Pressable>
           </View>
         </View>
 
-        <Text style={styles.footer}>Welcome to the NewLife Danao App</Text>
+        <Text className="mt-4 text-center text-[13px] text-gray-500">
+          Welcome to the NewLife Danao App
+        </Text>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: "#F4F7FB",
-  },
-  container: {
-    flex: 1,
-    justifyContent: "center",
-    paddingHorizontal: 20,
-  },
-  bgCircleTop: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: "#DDEBFF",
-    top: -70,
-    right: -60,
-    opacity: 0.9,
-  },
-  bgCircleBottom: {
-    position: "absolute",
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: "#E8F4FF",
-    bottom: -50,
-    left: -50,
-    opacity: 0.9,
-  },
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 24,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 6,
-  },
-  brandWrap: {
-    alignItems: "center",
-    marginBottom: 24,
-  },
-  logoCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "#2563EB",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 14,
-  },
-  logoText: {
-    color: "#FFFFFF",
-    fontSize: 22,
-    fontWeight: "800",
-    letterSpacing: 1,
-  },
-  brandTitle: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  brandSubtitle: {
-    marginTop: 6,
-    fontSize: 14,
-    color: "#6B7280",
-  },
-  form: {
-    gap: 12,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#374151",
-    marginTop: 2,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#D7DEE8",
-    backgroundColor: "#F9FBFD",
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderRadius: 14,
-    fontSize: 16,
-    color: "#111827",
-  },
-  button: {
-    backgroundColor: "#2563EB",
-    paddingVertical: 15,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 8,
-    shadowColor: "#2563EB",
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
-  },
-  buttonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  footer: {
-    textAlign: "center",
-    marginTop: 16,
-    color: "#6B7280",
-    fontSize: 13,
-  },
-});

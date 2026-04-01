@@ -3,16 +3,9 @@ import * as NavigationBar from "expo-navigation-bar";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { doc, getDoc } from "firebase/firestore";
 import { useEffect, useMemo, useState, type ComponentType } from "react";
-import {
-  Platform,
-  Pressable,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Platform, Pressable, SafeAreaView, ScrollView, Text, View } from "react-native";
 import { db } from "../lib/firebaseConfig";
+import EventScreen from "./event";
 import ManageGroup from "./admin/manage-group";
 import ManageMembers from "./admin/manage-members";
 import PlotCalendar from "./admin/plot-calendar";
@@ -60,12 +53,14 @@ export default function Main() {
     const adminItems: Item[] = [
       { title: "Manage Group", path: "/admin/manage-group", component: ManageGroup },
       { title: "Calendar", path: "/admin/plot-calendar", component: PlotCalendar },
+      { title: "Event", path: "/event", component: EventScreen },
       { title: "Members", path: "/admin/manage-members", component: ManageMembers },
     ];
 
     const memberItems: Item[] = [
       { title: "Tasks", path: "/task-board", memberOnly: true, component: Tasks },
       { title: "Calendar", path: "/member/calendar", memberOnly: true, component: MinistryCalendar },
+      { title: "Event", path: "/event", memberOnly: true, component: EventScreen },
       { title: "Volunteer", path: "/member/volunteers", memberOnly: true, component: Volunteers },
       { title: "Special Meeting", path: "/member/special-meeting", memberOnly: true, component: SpecialMeeting },
     ];
@@ -92,62 +87,63 @@ export default function Main() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.topBar}>
-        <Pressable onPress={() => setSidebarOpen((prev) => !prev)} style={styles.iconBtn}>
+    <SafeAreaView className="flex-1 bg-gray-100">
+      <View className="h-[60px] flex-row items-center justify-between border-b border-gray-200 bg-white px-4 z-30">
+        <Pressable onPress={() => setSidebarOpen((prev) => !prev)} className="h-10 w-10 items-center justify-center">
           <MaterialIcons name="menu" size={28} color="#111827" />
         </Pressable>
 
-        <Text style={styles.title}>NewLife Danao</Text>
+        <Text className="text-[18px] font-extrabold text-gray-900">NewLife Danao</Text>
 
-        <Pressable onPress={openSettings} style={styles.iconBtn}>
+        <Pressable onPress={openSettings} className="h-10 w-10 items-center justify-center">
           <MaterialIcons name="settings" size={28} color="#111827" />
         </Pressable>
       </View>
 
-      <View style={styles.page}>
+      <View className="flex-1">
         {sidebarOpen ? (
-          <Pressable style={styles.backdrop} onPress={() => setSidebarOpen(false)} />
+          <Pressable className="absolute inset-0 bg-gray-900/20 z-10" onPress={() => setSidebarOpen(false)} />
         ) : null}
 
         {sidebarOpen ? (
-          <View style={styles.sidebar}>
-            <View style={styles.sidebarHeader}>
-              <View style={styles.profileRow}>
-                <View style={styles.avatar}>
+          <View className="absolute left-0 top-0 bottom-0 z-20 w-[280px] border-r border-gray-200 bg-white px-3 pt-4 shadow-2xl">
+            <View className="mb-4 border-b border-gray-200 pb-3">
+              <View className="flex-row items-center gap-3">
+                <View className="h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-gray-100">
                   <MaterialIcons name="person" size={24} color="#6B7280" />
                 </View>
-                <View style={styles.profileTextWrap}>
-                  <Text style={styles.sidebarName}>{memberName}</Text>
-                  <Text style={styles.sidebarRole}>{role === "admin" ? "Admin" : "Member"}</Text>
+                <View className="flex-1">
+                  <Text className="text-[18px] font-extrabold text-gray-900">{memberName}</Text>
+                  <Text className="mt-1 text-[13px] font-semibold text-gray-500">
+                    {role === "admin" ? "Admin" : "Member"}
+                  </Text>
                 </View>
               </View>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sidebarList}>
-              {items.map((item) => (
-                <Pressable
-                  key={item.path}
-                  onPress={() => selectItem(item)}
-                  style={({ pressed }) => [
-                    styles.sidebarItem,
-                    activeItem?.path === item.path && styles.sidebarItemActive,
-                    pressed && styles.sidebarItemPressed,
-                  ]}
-                >
-                  <Text style={styles.sidebarText}>{item.title}</Text>
-                </Pressable>
-              ))}
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="pb-5">
+              {items.map((item) => {
+                const isActive = activeItem?.path === item.path;
+                return (
+                  <Pressable
+                    key={item.path}
+                    onPress={() => selectItem(item)}
+                    className={`mb-1 rounded-xl px-3 py-3 ${isActive ? "bg-blue-100" : ""}`}
+                  >
+                    <Text className="text-[15px] font-bold text-gray-900">{item.title}</Text>
+                  </Pressable>
+                );
+              })}
             </ScrollView>
           </View>
         ) : null}
 
-        <View style={styles.contentWrap}>
-          <View style={styles.contentHost}>
+        <View className="flex-1 items-stretch justify-stretch">
+          <View className="flex-1 w-full">
             {ActiveComponent ? (
               <ActiveComponent userId={id} userRole={role} memberName={memberName} />
             ) : (
-              <View style={styles.emptyFill} />
+              <View className="flex-1 bg-white" />
             )}
           </View>
         </View>
@@ -155,127 +151,3 @@ export default function Main() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-  },
-  topBar: {
-    height: 60,
-    backgroundColor: "#FFFFFF",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E5E7EB",
-    zIndex: 30,
-  },
-  iconBtn: {
-    width: 42,
-    height: 42,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  page: {
-    flex: 1,
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(17, 24, 39, 0.18)",
-    zIndex: 10,
-  },
-  sidebar: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    bottom: 0,
-    width: 280,
-    backgroundColor: "#FFFFFF",
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: "#E5E7EB",
-    zIndex: 20,
-    paddingTop: 14,
-    paddingHorizontal: 14,
-    shadowColor: "#000",
-    shadowOpacity: 0.14,
-    shadowRadius: 12,
-    shadowOffset: { width: 4, height: 0 },
-    elevation: 10,
-  },
-  sidebarHeader: {
-    marginBottom: 14,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E5E7EB",
-  },
-  profileRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  profileTextWrap: {
-    flex: 1,
-  },
-  sidebarName: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  sidebarRole: {
-    marginTop: 4,
-    fontSize: 13,
-    color: "#6B7280",
-    fontWeight: "600",
-  },
-  sidebarList: {
-    paddingBottom: 20,
-  },
-  sidebarItem: {
-    paddingVertical: 13,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    marginBottom: 6,
-  },
-  sidebarItemActive: {
-    backgroundColor: "#E8F0FF",
-  },
-  sidebarItemPressed: {
-    opacity: 0.72,
-  },
-  sidebarText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  contentWrap: {
-    flex: 1,
-    alignItems: "stretch",
-    justifyContent: "stretch",
-    padding: 0,
-  },
-  contentHost: {
-    flex: 1,
-    width: "100%",
-  },
-  emptyFill: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-  },
-});

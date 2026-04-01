@@ -2,24 +2,25 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
-    Timestamp,
-    addDoc,
-    collection,
-    doc,
-    getDocs,
-    updateDoc,
+  Timestamp,
+  collection,
+  deleteField,
+  doc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 import { useCallback, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Modal,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { db } from "../../lib/firebaseConfig";
 
@@ -62,6 +63,16 @@ type SubgroupDraft = {
 
 type PickerMode = "groupLeader" | "subgroupLeader" | "subgroupMembers";
 
+type SubGroupAssignment = {
+  groupId: string;
+  groupName: string;
+  subgroupId: string;
+  subgroupName: string;
+  leaderId: string;
+  leaderName: string;
+  leaderRole: string;
+};
+
 const getMemberName = (raw: any) => {
   return String(
     raw?.name ??
@@ -73,8 +84,17 @@ const getMemberName = (raw: any) => {
   );
 };
 
-const makeLocalId = () =>
-  `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown error";
+  }
+};
+
+const makeLocalId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
 const indexToLetters = (index: number) => {
   let n = index;
@@ -133,9 +153,7 @@ export default function ManageGroup() {
 
   const [showUserPickerModal, setShowUserPickerModal] = useState(false);
   const [pickerMode, setPickerMode] = useState<PickerMode>("groupLeader");
-  const [pickerSubgroupIndex, setPickerSubgroupIndex] = useState<number | null>(
-    null
-  );
+  const [pickerSubgroupIndex, setPickerSubgroupIndex] = useState<number | null>(null);
   const [pickerSearch, setPickerSearch] = useState("");
   const [pickerSelectedIds, setPickerSelectedIds] = useState<string[]>([]);
 
@@ -158,6 +176,29 @@ export default function ManageGroup() {
     if (!q) return users;
     return users.filter((u) => `${u.name} ${u.role}`.toLowerCase().includes(q));
   }, [users, pickerSearch]);
+
+  const takenMemberIds = useMemo(() => {
+    if (pickerMode !== "subgroupMembers" || pickerSubgroupIndex === null) {
+      return new Set<string>();
+    }
+
+    const ids = new Set<string>();
+    subgroupDrafts.forEach((draft, index) => {
+      if (index === pickerSubgroupIndex) return;
+      draft.memberIds.forEach((memberId) => ids.add(memberId));
+    });
+    return ids;
+  }, [pickerMode, pickerSubgroupIndex, subgroupDrafts]);
+
+  const getUniqueGroupMemberIds = useCallback((group: GroupItem) => {
+    const ids = group.subgroups.flatMap((subgroup) => subgroup.memberIds ?? []);
+    return Array.from(new Set(ids));
+  }, []);
+
+  const getGroupMemberCount = useCallback(
+    (group: GroupItem) => getUniqueGroupMemberIds(group).length,
+    [getUniqueGroupMemberIds]
+  );
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -252,8 +293,8 @@ export default function ManageGroup() {
       setUsers(userData);
       setMinistries(ministryData);
       setCoreGroups(coreGroupData);
-    } catch {
-      Alert.alert("Error", "Failed to load group data");
+    } catch (error) {
+      Alert.alert("Error", `Failed to load group data\n${getErrorMessage(error)}`);
     } finally {
       setLoading(false);
     }
@@ -306,9 +347,7 @@ export default function ManageGroup() {
       setPickerSelectedIds(selectedLeaderId ? [selectedLeaderId] : []);
     } else if (mode === "subgroupLeader" && subgroupIndex !== null) {
       setPickerSelectedIds(
-        subgroupDrafts[subgroupIndex]?.leaderId
-          ? [subgroupDrafts[subgroupIndex].leaderId]
-          : []
+        subgroupDrafts[subgroupIndex]?.leaderId ? [subgroupDrafts[subgroupIndex].leaderId] : []
       );
     } else if (mode === "subgroupMembers" && subgroupIndex !== null) {
       setPickerSelectedIds(subgroupDrafts[subgroupIndex]?.memberIds ?? []);
@@ -351,9 +390,7 @@ export default function ManageGroup() {
       if (pickerSubgroupIndex === null) return;
       setSubgroupDrafts((prev) =>
         prev.map((item, index) =>
-          index === pickerSubgroupIndex
-            ? { ...item, memberIds: [...pickerSelectedIds] }
-            : item
+          index === pickerSubgroupIndex ? { ...item, memberIds: [...pickerSelectedIds] } : item
         )
       );
       closeUserPicker();
@@ -376,6 +413,10 @@ export default function ManageGroup() {
 
   const togglePickerUser = (userId: string) => {
     if (pickerMode === "subgroupMembers") {
+      if (takenMemberIds.has(userId) && !pickerSelectedIds.includes(userId)) {
+        return;
+      }
+
       setPickerSelectedIds((prev) =>
         prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
       );
@@ -395,10 +436,7 @@ export default function ManageGroup() {
     const description = newGroupDescription.trim() || "No Description Provided";
 
     if (!name) {
-      return Alert.alert(
-        "Error",
-        `Please enter ${activeInfo.label.toLowerCase()} name`
-      );
+      return Alert.alert("Error", `Please enter ${activeInfo.label.toLowerCase()} name`);
     }
 
     if (!selectedLeaderId) {
@@ -422,6 +460,20 @@ export default function ManageGroup() {
       }
     }
 
+    const seenMemberIds = new Set<string>();
+    for (let i = 0; i < subgroupDrafts.length; i++) {
+      for (const memberId of subgroupDrafts[i].memberIds) {
+        if (seenMemberIds.has(memberId)) {
+          const memberName = users.find((u) => u.id === memberId)?.name ?? "A member";
+          return Alert.alert(
+            "Error",
+            `${memberName} is already selected in another subgroup.`
+          );
+        }
+        seenMemberIds.add(memberId);
+      }
+    }
+
     const currentList = activeKind === "ministry" ? ministries : coreGroups;
     const exists = currentList.some((group) => {
       if (editingGroup && group.id === editingGroup.id) return false;
@@ -432,6 +484,29 @@ export default function ManageGroup() {
 
     setSavingGroup(true);
     try {
+      const groupRef = editingGroup
+        ? doc(db, activeInfo.collectionName, editingGroup.id)
+        : doc(collection(db, activeInfo.collectionName));
+
+      const resolvedSubgroups = subgroupDrafts.map((subgroup, index) => {
+        const subgroupLeader = users.find((u) => u.id === subgroup.leaderId);
+        const subgroupMembers = subgroup.memberIds
+          .map((memberId) => users.find((u) => u.id === memberId))
+          .filter((x): x is UserOption => Boolean(x));
+
+        return {
+          id: subgroup.localId || makeLocalId(),
+          name: `Group ${indexToLetters(index)}`,
+          leaderId: subgroupLeader?.id ?? "",
+          leaderName: subgroupLeader?.name ?? "",
+          leaderRole: subgroupLeader?.role ?? "",
+          memberIds: Array.from(new Set(subgroup.memberIds)),
+          memberNames: subgroupMembers.map((member) => member.name),
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        };
+      });
+
       const payload = {
         name,
         description,
@@ -441,30 +516,72 @@ export default function ManageGroup() {
         isActive: newGroupIsActive,
         createdAt: editingGroup?.createdAt ?? Timestamp.now(),
         updatedAt: Timestamp.now(),
-        subgroups: subgroupDrafts.map((subgroup, index) => {
-          const subgroupLeader = users.find((u) => u.id === subgroup.leaderId);
-          const subgroupMembers = subgroup.memberIds
-            .map((memberId) => users.find((u) => u.id === memberId))
-            .filter((x): x is UserOption => Boolean(x));
-
-          return {
-            id: subgroup.localId || makeLocalId(),
-            name: `Group ${indexToLetters(index)}`,
-            leaderId: subgroupLeader?.id ?? "",
-            leaderName: subgroupLeader?.name ?? "",
-            leaderRole: subgroupLeader?.role ?? "",
-            memberIds: subgroup.memberIds,
-            memberNames: subgroupMembers.map((member) => member.name),
-            createdAt: Timestamp.now(),
-            updatedAt: Timestamp.now(),
-          };
-        }),
+        subgroups: resolvedSubgroups,
       };
 
       if (editingGroup) {
-        await updateDoc(doc(db, activeInfo.collectionName, editingGroup.id), payload);
+        await updateDoc(groupRef, payload);
       } else {
-        await addDoc(collection(db, activeInfo.collectionName), payload);
+        await setDoc(groupRef, payload);
+      }
+
+      const nextAssignments = new Map<string, SubGroupAssignment>();
+      resolvedSubgroups.forEach((subgroup) => {
+        subgroup.memberIds.forEach((memberId) => {
+          nextAssignments.set(memberId, {
+            groupId: groupRef.id,
+            groupName: name,
+            subgroupId: subgroup.id,
+            subgroupName: subgroup.name,
+            leaderId: subgroup.leaderId,
+            leaderName: subgroup.leaderName,
+            leaderRole: subgroup.leaderRole,
+          });
+        });
+      });
+
+      const previousMemberIds = editingGroup
+        ? Array.from(
+            new Set(editingGroup.subgroups.flatMap((subgroup) => subgroup.memberIds ?? []))
+          )
+        : [];
+
+      try {
+        const batch = writeBatch(db);
+
+        for (const userId of previousMemberIds) {
+          if (!nextAssignments.has(userId)) {
+            batch.set(
+              doc(db, "users", userId),
+              {
+                subGroup: {
+                  [activeKind]: deleteField(),
+                },
+              },
+              { merge: true }
+            );
+          }
+        }
+
+        for (const [userId, assignment] of nextAssignments.entries()) {
+          batch.set(
+            doc(db, "users", userId),
+            {
+              subGroup: {
+                [activeKind]: assignment,
+              },
+            },
+            { merge: true }
+          );
+        }
+
+        await batch.commit();
+      } catch (error) {
+        Alert.alert(
+          "Saved",
+          `${activeInfo.label} was saved, but member assignments failed.\n${getErrorMessage(error)}`
+        );
+        return;
       }
 
       setNewGroupName("");
@@ -475,8 +592,8 @@ export default function ManageGroup() {
       setSubgroupDrafts([{ localId: makeLocalId(), leaderId: "", memberIds: [] }]);
       setShowAddModal(false);
       await loadData();
-    } catch {
-      Alert.alert("Error", `Failed to save ${activeInfo.label.toLowerCase()}`);
+    } catch (error) {
+      Alert.alert("Error", `Failed to save ${activeInfo.label.toLowerCase()}\n${getErrorMessage(error)}`);
     } finally {
       setSavingGroup(false);
     }
@@ -500,28 +617,29 @@ export default function ManageGroup() {
     pickerMode === "groupLeader"
       ? `Select ${activeInfo.label} Leader`
       : pickerMode === "subgroupLeader"
-        ? `Select Group ${pickerSubgroupIndex !== null ? indexToLetters(pickerSubgroupIndex) : ""} Leader`
-        : `Select Group ${pickerSubgroupIndex !== null ? indexToLetters(pickerSubgroupIndex) : ""} Members`;
+        ? `Select Group ${
+            pickerSubgroupIndex !== null ? indexToLetters(pickerSubgroupIndex) : ""
+          } Leader`
+        : `Select Group ${
+            pickerSubgroupIndex !== null ? indexToLetters(pickerSubgroupIndex) : ""
+          } Members`;
 
   return (
-    <View style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Manage Group</Text>
+    <View className="flex-1 bg-[#F7F8FA]">
+      <ScrollView className="flex-1" contentContainerClassName="px-5 pt-5 pb-[110px]">
+        <Text className="text-2xl font-extrabold text-gray-900">Manage Group</Text>
 
-        <View style={styles.tabRow}>
+        <View className="mt-3 flex-row gap-2.5">
           <Pressable
             onPress={() => setActiveKind("ministry")}
-            style={({ pressed }) => [
-              styles.tabButton,
-              activeKind === "ministry" && styles.tabButtonActive,
-              pressed && styles.pressed,
-            ]}
+            className={`flex-1 items-center rounded-[14px] px-3 py-3.5 ${
+              activeKind === "ministry" ? "bg-gray-900" : "bg-gray-200"
+            }`}
           >
             <Text
-              style={[
-                styles.tabText,
-                activeKind === "ministry" && styles.tabTextActive,
-              ]}
+              className={`font-bold ${
+                activeKind === "ministry" ? "text-white" : "text-gray-900"
+              }`}
             >
               Ministries
             </Text>
@@ -529,17 +647,14 @@ export default function ManageGroup() {
 
           <Pressable
             onPress={() => setActiveKind("coreGroup")}
-            style={({ pressed }) => [
-              styles.tabButton,
-              activeKind === "coreGroup" && styles.tabButtonActive,
-              pressed && styles.pressed,
-            ]}
+            className={`flex-1 items-center rounded-[14px] px-3 py-3.5 ${
+              activeKind === "coreGroup" ? "bg-gray-900" : "bg-gray-200"
+            }`}
           >
             <Text
-              style={[
-                styles.tabText,
-                activeKind === "coreGroup" && styles.tabTextActive,
-              ]}
+              className={`font-bold ${
+                activeKind === "coreGroup" ? "text-white" : "text-gray-900"
+              }`}
             >
               Core Groups
             </Text>
@@ -547,99 +662,153 @@ export default function ManageGroup() {
         </View>
 
         {loading ? (
-          <View style={{ paddingVertical: 20 }}>
+          <View className="py-5">
             <ActivityIndicator />
           </View>
         ) : activeGroups.length === 0 ? (
-          <Text style={styles.emptyText}>{activeInfo.emptyText}</Text>
+          <Text className="text-gray-500">{activeInfo.emptyText}</Text>
         ) : (
-          activeGroups.map((group) => {
-            const expanded = expandedGroupId === group.id;
+          <View className="mt-1 gap-3">
+            {activeGroups.map((group) => {
+              const expanded = expandedGroupId === group.id;
+              const groupMemberCount = getGroupMemberCount(group);
 
-            return (
-              <View key={group.id} style={styles.cardWrap}>
-                <Pressable
-                  onPress={() => openGroupBoard(group)}
-                  style={({ pressed }) => [styles.card, pressed && styles.pressed]}
-                >
-                  <Text style={styles.cardTitle}>{group.name}</Text>
-                  {!!group.description && (
-                    <Text style={styles.cardDescription}>{group.description}</Text>
-                  )}
-
-                  <View style={styles.cardFooter}>
-                    <Text style={styles.cardLeader}>
-                      Leader: {group.leaderName || "Not set"}
+              return (
+                <View key={group.id} className="relative">
+                  <Pressable
+                    onPress={() => openGroupBoard(group)}
+                    className="relative gap-2 rounded-[14px] border border-gray-200 bg-white p-[14px]"
+                  >
+                    <Text className="pr-12 text-[18px] font-bold text-gray-900">
+                      {group.name}
                     </Text>
-                  </View>
-                </Pressable>
 
-                <Pressable
-                  onPress={() => openEditModal(group)}
-                  style={({ pressed }) => [styles.editButton, pressed && styles.pressed]}
-                >
-                  <Ionicons name="create-outline" size={18} color="#111827" />
-                </Pressable>
-
-                <Pressable
-                  onPress={() =>
-                    setExpandedGroupId((prev) => (prev === group.id ? null : group.id))
-                  }
-                  style={({ pressed }) => [
-                    styles.dropdownButton,
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <Ionicons
-                    name={expanded ? "chevron-up" : "chevron-down"}
-                    size={18}
-                    color="#111827"
-                  />
-                </Pressable>
-
-                {expanded ? (
-                  <View style={styles.subgroupGrid}>
-                    {group.subgroups.length === 0 ? (
-                      <Text style={styles.emptyText}>No subgroups yet</Text>
-                    ) : (
-                      group.subgroups.map((subgroup, index) => (
-                        <View key={subgroup.id} style={styles.subgroupCard}>
-                          <Text style={styles.subgroupTitle}>
-                            {subgroup.name || `Group ${indexToLetters(index)}`}
-                          </Text>
-                          <Text style={styles.subgroupLeader}>
-                            Leader: {subgroup.leaderName || "Not set"}
-                          </Text>
-
-                          <View style={styles.memberList}>
-                            {subgroup.memberNames.length > 0 ? (
-                              subgroup.memberNames.map((memberName, memberIndex) => (
-                                <View
-                                  key={`${subgroup.id}-${memberIndex}`}
-                                  style={styles.memberRow}
-                                >
-                                  <Text style={styles.memberBullet}>•</Text>
-                                  <Text style={styles.memberName}>{memberName}</Text>
-                                </View>
-                              ))
-                            ) : (
-                              <Text style={styles.emptyText}>No members</Text>
-                            )}
-                          </View>
-                        </View>
-                      ))
+                    {!!group.description && (
+                      <Text className="pr-2 text-sm leading-5 text-gray-600">
+                        {group.description}
+                      </Text>
                     )}
-                  </View>
-                ) : null}
-              </View>
-            );
-          })
+
+                    <View className="mt-0.5 flex-row flex-wrap gap-2 pr-12">
+                      <View className="flex-row items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1.5">
+                        <Ionicons name="people-outline" size={14} color="#111827" />
+                        <Text className="text-xs font-extrabold text-gray-900">
+                          {group.subgroups.length} subgroups
+                        </Text>
+                      </View>
+                      <View className="flex-row items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1.5">
+                        <Ionicons name="person" size={14} color="#111827" />
+                        <Text className="text-xs font-extrabold text-gray-900">
+                          {groupMemberCount} members
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View className="mt-0.5 pr-12">
+                      <View className="flex-row items-center gap-1.5">
+                        <Ionicons
+                          name="person-circle-outline"
+                          size={16}
+                          color="#6B7280"
+                        />
+                        <Text className="text-[13px] font-semibold text-gray-500">
+                          {group.leaderName || "Not set"}
+                        </Text>
+                      </View>
+                    </View>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => openEditModal(group)}
+                    className="absolute right-2.5 top-2.5 z-[3] h-[34px] w-[34px] items-center justify-center rounded-full bg-gray-100"
+                  >
+                    <Ionicons name="create-outline" size={18} color="#111827" />
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() =>
+                      setExpandedGroupId((prev) => (prev === group.id ? null : group.id))
+                    }
+                    className="absolute right-2.5 top-[50px] z-[3] h-[34px] w-[34px] items-center justify-center rounded-full bg-gray-100"
+                  >
+                    <Ionicons
+                      name={expanded ? "chevron-up" : "chevron-down"}
+                      size={18}
+                      color="#111827"
+                    />
+                  </Pressable>
+
+                  {expanded ? (
+                    <View className="mt-2.5 flex-row flex-wrap justify-between gap-2.5">
+                      {group.subgroups.length === 0 ? (
+                        <Text className="text-gray-500">No subgroups yet</Text>
+                      ) : (
+                        group.subgroups.map((subgroup, index) => {
+                          const subgroupMemberCount = subgroup.memberIds.length;
+
+                          return (
+                            <View
+                              key={subgroup.id}
+                              className="relative min-h-[140px] basis-[48%] flex-shrink-0 flex-grow-0 gap-2 rounded-[14px] border border-gray-200 bg-[#FAFAFA] p-2.5"
+                            >
+                              <View className="flex-row items-start justify-between gap-2 pr-0.5">
+                                <Text className="flex-1 text-sm font-extrabold text-gray-900">
+                                  {subgroup.name || `Group ${indexToLetters(index)}`}
+                                </Text>
+                                <View className="flex-row items-center gap-1 rounded-full bg-gray-200 px-2 py-1">
+                                  <Ionicons name="people-outline" size={13} color="#111827" />
+                                  <Text className="text-xs font-extrabold text-gray-900">
+                                    {subgroupMemberCount}
+                                  </Text>
+                                </View>
+                              </View>
+
+                              <View className="flex-row items-center gap-1.5">
+                                <Ionicons
+                                  name="person-circle-outline"
+                                  size={15}
+                                  color="#4B5563"
+                                />
+                                <Text className="flex-1 text-xs font-bold text-gray-600">
+                                  {subgroup.leaderName || "Not set"}
+                                </Text>
+                              </View>
+
+                              <View className="gap-1.5">
+                                {subgroup.memberNames.length > 0 ? (
+                                  subgroup.memberNames.map((memberName, memberIndex) => (
+                                    <View
+                                      key={`${subgroup.id}-${memberIndex}`}
+                                      className="flex-row items-center gap-2"
+                                    >
+                                      <View className="h-6 w-6 items-center justify-center rounded-full bg-gray-200">
+                                        <Ionicons name="person" size={14} color="#9CA3AF" />
+                                      </View>
+                                      <Text className="flex-1 text-xs font-semibold leading-[18px] text-gray-900">
+                                        {memberName}
+                                      </Text>
+                                    </View>
+                                  ))
+                                ) : (
+                                  <Text className="text-gray-500">No members</Text>
+                                )}
+                              </View>
+                            </View>
+                          );
+                        })
+                      )}
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
         )}
       </ScrollView>
 
       <Pressable
         onPress={() => openCreateModal(activeKind)}
-        style={({ pressed }) => [styles.fab, pressed && styles.pressed]}
+        className="absolute bottom-5 right-5 h-[60px] w-[60px] items-center justify-center rounded-full bg-gray-900 shadow-lg"
       >
         <Ionicons name="add" size={32} color="white" />
       </Pressable>
@@ -651,12 +820,12 @@ export default function ManageGroup() {
         onRequestClose={() => setShowAddModal(false)}
       >
         <Pressable
-          style={styles.bottomBackdrop}
+          className="flex-1 justify-end bg-black/45"
           onPress={() => setShowAddModal(false)}
         >
-          <Pressable style={styles.bottomSheet} onPress={() => {}}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitleCenter}>
+          <Pressable className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2.5">
+            <View className="mb-3 self-center h-[5px] w-11 rounded-full bg-gray-300" />
+            <Text className="mb-3 text-center text-xl font-extrabold text-gray-900">
               {editingGroup
                 ? `Edit ${activeInfo.label}`
                 : activeKind === "ministry"
@@ -664,45 +833,39 @@ export default function ManageGroup() {
                   : "New Core Group"}
             </Text>
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.sheetContent}
-            >
-              <View style={styles.fieldBlock}>
-                <Text style={styles.fieldLabel}>Name</Text>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="gap-3 pb-2.5">
+              <View className="gap-2">
+                <Text className="text-[13px] font-extrabold text-gray-900">Name</Text>
                 <TextInput
                   value={newGroupName}
                   onChangeText={setNewGroupName}
                   placeholder={activeInfo.placeholder}
-                  style={styles.input}
+                  className="rounded-[14px] border border-gray-200 bg-white px-4 py-3 text-[15px] text-gray-900"
                 />
               </View>
 
-              <View style={styles.fieldBlock}>
-                <Text style={styles.fieldLabel}>Description</Text>
+              <View className="gap-2">
+                <Text className="text-[13px] font-extrabold text-gray-900">Description</Text>
                 <TextInput
                   value={newGroupDescription}
                   onChangeText={setNewGroupDescription}
                   placeholder="Write a short description"
                   multiline
                   textAlignVertical="top"
-                  style={[styles.input, styles.textArea]}
+                  className="min-h-[96px] rounded-[14px] border border-gray-200 bg-white px-4 py-3 text-[15px] text-gray-900"
                 />
               </View>
 
-              <View style={styles.fieldBlock}>
-                <Text style={styles.fieldLabel}>Leader</Text>
+              <View className="gap-2">
+                <Text className="text-[13px] font-extrabold text-gray-900">Leader</Text>
                 <Pressable
                   onPress={() => openUserPicker("groupLeader")}
-                  style={({ pressed }) => [
-                    styles.selectorButton,
-                    pressed && styles.pressed,
-                  ]}
+                  className="flex-row items-center justify-between gap-2 rounded-[14px] border border-gray-200 bg-white px-4 py-3"
                 >
                   <Text
-                    style={
-                      selectedLeader ? styles.selectorValue : styles.selectorPlaceholder
-                    }
+                    className={`flex-1 text-[15px] font-semibold ${
+                      selectedLeader ? "text-gray-900" : "text-gray-400"
+                    }`}
                   >
                     {selectedLeader ? selectedLeader.name : "Select from users"}
                   </Text>
@@ -710,15 +873,15 @@ export default function ManageGroup() {
                 </Pressable>
               </View>
 
-              <View style={styles.subgroupSection}>
-                <View style={styles.subgroupSectionHeader}>
-                  <Text style={styles.subgroupSectionTitle}>Subgroups</Text>
+              <View className="gap-3">
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-[15px] font-extrabold text-gray-900">Subgroups</Text>
                   <Pressable
                     onPress={addSubgroup}
-                    style={({ pressed }) => [styles.addSubgroupButton, pressed && styles.pressed]}
+                    className="flex-row items-center gap-1.5 rounded-xl bg-gray-900 px-3 py-2"
                   >
                     <Ionicons name="add" size={18} color="#fff" />
-                    <Text style={styles.addSubgroupButtonText}>Add</Text>
+                    <Text className="text-[13px] font-extrabold text-white">Add</Text>
                   </Pressable>
                 </View>
 
@@ -730,39 +893,34 @@ export default function ManageGroup() {
                     .filter((x): x is UserOption => Boolean(x));
 
                   return (
-                    <View key={subgroup.localId} style={styles.subgroupEditCard}>
-                      <View style={styles.subgroupEditHeader}>
-                        <Text style={styles.subgroupEditTitle}>
+                    <View
+                      key={subgroup.localId}
+                      className="gap-3 rounded-2xl border border-gray-200 bg-[#FAFAFA] p-3"
+                    >
+                      <View className="flex-row items-center justify-between">
+                        <Text className="text-[15px] font-extrabold text-gray-900">
                           Group {indexToLetters(index)}
                         </Text>
                         {subgroupDrafts.length > 1 ? (
                           <Pressable
                             onPress={() => removeSubgroup(index)}
-                            style={({ pressed }) => [
-                              styles.removeSubgroupButton,
-                              pressed && styles.pressed,
-                            ]}
+                            className="h-[34px] w-[34px] items-center justify-center rounded-full bg-red-100"
                           >
                             <Ionicons name="trash-outline" size={18} color="#DC2626" />
                           </Pressable>
                         ) : null}
                       </View>
 
-                      <View style={styles.fieldBlock}>
-                        <Text style={styles.fieldLabel}>Leader</Text>
+                      <View className="gap-2">
+                        <Text className="text-[13px] font-extrabold text-gray-900">Leader</Text>
                         <Pressable
                           onPress={() => openUserPicker("subgroupLeader", index)}
-                          style={({ pressed }) => [
-                            styles.selectorButton,
-                            pressed && styles.pressed,
-                          ]}
+                          className="flex-row items-center justify-between gap-2 rounded-[14px] border border-gray-200 bg-white px-4 py-3"
                         >
                           <Text
-                            style={
-                              subgroupLeader
-                                ? styles.selectorValue
-                                : styles.selectorPlaceholder
-                            }
+                            className={`flex-1 text-[15px] font-semibold ${
+                              subgroupLeader ? "text-gray-900" : "text-gray-400"
+                            }`}
                           >
                             {subgroupLeader ? subgroupLeader.name : "Select leader"}
                           </Text>
@@ -770,21 +928,16 @@ export default function ManageGroup() {
                         </Pressable>
                       </View>
 
-                      <View style={styles.fieldBlock}>
-                        <Text style={styles.fieldLabel}>Members</Text>
+                      <View className="gap-2">
+                        <Text className="text-[13px] font-extrabold text-gray-900">Members</Text>
                         <Pressable
                           onPress={() => openUserPicker("subgroupMembers", index)}
-                          style={({ pressed }) => [
-                            styles.selectorButton,
-                            pressed && styles.pressed,
-                          ]}
+                          className="flex-row items-center justify-between gap-2 rounded-[14px] border border-gray-200 bg-white px-4 py-3"
                         >
                           <Text
-                            style={
-                              subgroupMembers.length > 0
-                                ? styles.selectorValue
-                                : styles.selectorPlaceholder
-                            }
+                            className={`flex-1 text-[15px] font-semibold ${
+                              subgroupMembers.length > 0 ? "text-gray-900" : "text-gray-400"
+                            }`}
                           >
                             {subgroupMembers.length > 0
                               ? `${subgroupMembers.length} selected`
@@ -794,16 +947,24 @@ export default function ManageGroup() {
                         </Pressable>
                       </View>
 
-                      <View style={styles.memberList}>
+                      <View className="gap-1.5">
                         {subgroupMembers.length > 0 ? (
                           subgroupMembers.map((member) => (
-                            <View key={member.id} style={styles.memberRow}>
-                              <Text style={styles.memberBullet}>•</Text>
-                              <Text style={styles.memberName}>{member.name}</Text>
+                            <View key={member.id} className="flex-row items-center gap-2">
+                              <View className="h-6 w-6 items-center justify-center rounded-full bg-gray-200">
+                                <Ionicons
+                                  name="help-circle-outline"
+                                  size={14}
+                                  color="#9CA3AF"
+                                />
+                              </View>
+                              <Text className="flex-1 text-xs font-semibold leading-[18px] text-gray-900">
+                                {member.name}
+                              </Text>
                             </View>
                           ))
                         ) : (
-                          <Text style={styles.emptyText}>No members selected</Text>
+                          <Text className="text-gray-500">No members selected</Text>
                         )}
                       </View>
                     </View>
@@ -811,46 +972,37 @@ export default function ManageGroup() {
                 })}
               </View>
 
-              <View style={styles.sheetActions}>
+              <View className="flex-row items-center gap-2 pt-1">
                 <Pressable
                   onPress={() => setNewGroupIsActive((prev) => !prev)}
-                  style={({ pressed }) => [
-                    styles.statusToggle,
-                    pressed && styles.pressed,
-                  ]}
                   accessibilityRole="button"
                   accessibilityLabel={newGroupIsActive ? "Set inactive" : "Set active"}
+                  className="h-[34px] w-[34px] items-center justify-center rounded-full border border-gray-200 bg-white"
                 >
                   <View
-                    style={[
-                      styles.statusDotLarge,
-                      { backgroundColor: newGroupIsActive ? "#22C55E" : "#EF4444" },
-                    ]}
+                    className={`h-[14px] w-[14px] rounded-full ${
+                      newGroupIsActive ? "bg-green-500" : "bg-red-500"
+                    }`}
                   />
                 </Pressable>
 
-                <View style={{ flex: 1 }} />
+                <View className="flex-1" />
 
                 <Pressable
                   onPress={() => setShowAddModal(false)}
-                  style={({ pressed }) => [
-                    styles.cancelButton,
-                    pressed && styles.pressed,
-                  ]}
+                  className="rounded-[14px] bg-gray-200 px-4 py-3"
                 >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                  <Text className="font-extrabold text-gray-900">Cancel</Text>
                 </Pressable>
 
                 <Pressable
                   onPress={saveGroup}
-                  style={({ pressed }) => [
-                    styles.saveButton,
-                    pressed && styles.pressed,
-                    savingGroup && { opacity: 0.75 },
-                  ]}
                   disabled={savingGroup}
+                  className={`rounded-[14px] bg-gray-900 px-4 py-3 ${
+                    savingGroup ? "opacity-75" : ""
+                  }`}
                 >
-                  <Text style={styles.saveButtonText}>
+                  <Text className="font-extrabold text-white">
                     {savingGroup ? "Saving..." : editingGroup ? "Update" : "Create"}
                   </Text>
                 </Pressable>
@@ -866,67 +1018,80 @@ export default function ManageGroup() {
         animationType="slide"
         onRequestClose={closeUserPicker}
       >
-        <Pressable style={styles.bottomBackdrop} onPress={closeUserPicker}>
-          <Pressable style={styles.pickerSheet} onPress={() => {}}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitleCenter}>{selectedPickerTitle}</Text>
+        <Pressable className="flex-1 justify-end bg-black/45" onPress={closeUserPicker}>
+          <Pressable className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2.5">
+            <View className="mb-3 self-center h-[5px] w-11 rounded-full bg-gray-300" />
+            <Text className="mb-3 text-center text-xl font-extrabold text-gray-900">
+              {selectedPickerTitle}
+            </Text>
 
-            <View style={styles.searchWrap}>
+            <View className="mb-2.5 flex-row h-[50px] items-center gap-2.5 rounded-[14px] border border-gray-200 bg-white px-4">
               <Ionicons name="search" size={18} color="#6B7280" />
               <TextInput
                 value={pickerSearch}
                 onChangeText={setPickerSearch}
                 placeholder="Search users"
                 placeholderTextColor="#9CA3AF"
-                style={styles.searchInput}
+                className="flex-1 text-[15px] text-gray-900"
               />
             </View>
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ gap: 10, paddingBottom: 8 }}
-            >
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="gap-2.5 pb-2">
               {filteredUsers.length === 0 ? (
-                <Text style={styles.emptyTextCenter}>No users found</Text>
+                <Text className="py-5 text-center text-gray-500">No users found</Text>
               ) : (
                 filteredUsers.map((user) => {
                   const active = pickerSelectedIds.includes(user.id);
+                  const disabled =
+                    pickerMode === "subgroupMembers" &&
+                    takenMemberIds.has(user.id) &&
+                    !active;
 
                   return (
                     <Pressable
                       key={user.id}
-                      onPress={() => togglePickerUser(user.id)}
-                      style={({ pressed }) => [
-                        styles.userRow,
-                        active && styles.userRowActive,
-                        pressed && styles.pressedOption,
-                      ]}
+                      onPress={() => {
+                        if (disabled) return;
+                        togglePickerUser(user.id);
+                      }}
+                      className={`flex-row items-center gap-3 rounded-[14px] border p-3 ${
+                        disabled
+                          ? "border-gray-100 bg-gray-50 opacity-50"
+                          : active
+                            ? "border-blue-200 bg-blue-50"
+                            : "border-gray-200 bg-white"
+                      }`}
                     >
-                      <View style={styles.userAvatar}>
+                      <View className="h-[38px] w-[38px] items-center justify-center rounded-full bg-gray-100">
                         <Ionicons name="person" size={18} color="#9CA3AF" />
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.userName}>{user.name}</Text>
-                        {!!user.role && <Text style={styles.userRole}>{user.role}</Text>}
+
+                      <View className="flex-1">
+                        <Text className="text-[15px] font-extrabold text-gray-900">
+                          {user.name}
+                        </Text>
+                        {!!user.role && (
+                          <Text className="mt-0.5 text-[13px] font-semibold text-gray-500">
+                            {user.role}
+                          </Text>
+                        )}
+                        {disabled ? (
+                          <Text className="mt-0.5 text-[12px] font-semibold text-red-500">
+                            Already selected in another subgroup
+                          </Text>
+                        ) : null}
                       </View>
+
                       {pickerMode === "subgroupMembers" ? (
                         active ? (
                           <Ionicons name="checkbox" size={22} color="#16A34A" />
                         ) : (
-                          <Ionicons
-                            name="square-outline"
-                            size={22}
-                            color="#9CA3AF"
-                          />
+                          <Ionicons name="square-outline" size={22} color="#9CA3AF" />
                         )
                       ) : active ? (
                         <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
                       ) : (
-                        <Ionicons
-                          name="ellipse-outline"
-                          size={22}
-                          color="#9CA3AF"
-                        />
+                        <Ionicons name="ellipse-outline" size={22} color="#9CA3AF" />
                       )}
                     </Pressable>
                   );
@@ -934,22 +1099,16 @@ export default function ManageGroup() {
               )}
             </ScrollView>
 
-            <View style={styles.pickerActions}>
+            <View className="flex-row items-center justify-end gap-2.5 pt-1.5">
               <Pressable
                 onPress={closeUserPicker}
-                style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+                className="rounded-[14px] bg-gray-200 px-4 py-3"
               >
-                <Text style={styles.cancelButtonText}>Close</Text>
+                <Text className="font-extrabold text-gray-900">Close</Text>
               </Pressable>
 
-              <Pressable
-                onPress={confirmUserPicker}
-                style={({ pressed }) => [
-                  styles.saveButton,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text style={styles.saveButtonText}>
+              <Pressable onPress={confirmUserPicker} className="rounded-[14px] bg-gray-900 px-4 py-3">
+                <Text className="font-extrabold text-white">
                   {pickerMode === "subgroupMembers" ? "Done" : "Select"}
                 </Text>
               </Pressable>
@@ -960,429 +1119,3 @@ export default function ManageGroup() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: "#F7F8FA",
-  },
-  container: {
-    padding: 20,
-    paddingBottom: 110,
-    gap: 14,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  tabRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#E5E7EB",
-    alignItems: "center",
-  },
-  tabButtonActive: {
-    backgroundColor: "#111827",
-  },
-  tabText: {
-    fontWeight: "700",
-    color: "#111827",
-  },
-  tabTextActive: {
-    color: "white",
-  },
-  emptyText: {
-    color: "#6B7280",
-  },
-  emptyTextCenter: {
-    textAlign: "center",
-    color: "#6B7280",
-    paddingVertical: 20,
-  },
-  cardWrap: {
-    position: "relative",
-  },
-  card: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    padding: 14,
-    gap: 6,
-    backgroundColor: "#fff",
-    position: "relative",
-  },
-  editButton: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#F3F4F6",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 3,
-  },
-  dropdownButton: {
-    position: "absolute",
-    top: 50,
-    right: 10,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#F3F4F6",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 3,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#111827",
-    paddingRight: 46,
-  },
-  cardDescription: {
-    fontSize: 14,
-    color: "#4B5563",
-    lineHeight: 20,
-    paddingRight: 10,
-  },
-  cardFooter: {
-    marginTop: 4,
-    gap: 4,
-    paddingRight: 46,
-  },
-  cardLeader: {
-    color: "#6B7280",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  subgroupGrid: {
-    marginTop: 10,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  subgroupCard: {
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: 180,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    padding: 10,
-    backgroundColor: "#FAFAFA",
-    gap: 8,
-    minHeight: 120,
-  },
-  subgroupTitle: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  subgroupLeader: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#4B5563",
-  },
-  memberList: {
-    gap: 4,
-  },
-  memberRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-  },
-  memberBullet: {
-    fontSize: 14,
-    lineHeight: 18,
-    color: "#111827",
-    fontWeight: "800",
-  },
-  memberName: {
-    flex: 1,
-    fontSize: 12,
-    lineHeight: 18,
-    color: "#111827",
-    fontWeight: "600",
-  },
-  fab: {
-    position: "absolute",
-    right: 20,
-    bottom: 20,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: "#111827",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  bottomBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "flex-end",
-  },
-  bottomSheet: {
-    backgroundColor: "white",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 18,
-    maxHeight: "90%",
-  },
-  pickerSheet: {
-    backgroundColor: "white",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 18,
-    maxHeight: "90%",
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 44,
-    height: 5,
-    borderRadius: 99,
-    backgroundColor: "#D1D5DB",
-    marginBottom: 14,
-  },
-  sheetTitleCenter: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#111827",
-    textAlign: "center",
-    marginBottom: 14,
-  },
-  sheetContent: {
-    gap: 12,
-    paddingBottom: 10,
-  },
-  fieldBlock: {
-    gap: 8,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: "#111827",
-    backgroundColor: "#fff",
-  },
-  textArea: {
-    minHeight: 96,
-  },
-  selectorButton: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: "#fff",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  selectorPlaceholder: {
-    fontSize: 15,
-    color: "#9CA3AF",
-    fontWeight: "600",
-    flex: 1,
-  },
-  selectorValue: {
-    fontSize: 15,
-    color: "#111827",
-    fontWeight: "700",
-    flex: 1,
-  },
-  searchWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    height: 50,
-    marginBottom: 10,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 15,
-    color: "#111827",
-  },
-  userRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: "#fff",
-  },
-  userRowActive: {
-    backgroundColor: "#EFF6FF",
-    borderColor: "#BFDBFE",
-  },
-  userAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  userName: {
-    fontWeight: "800",
-    color: "#111827",
-    fontSize: 15,
-  },
-  userRole: {
-    marginTop: 2,
-    color: "#6B7280",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  sheetActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingTop: 4,
-  },
-  pickerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: 10,
-    paddingTop: 6,
-  },
-  statusToggle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  statusDotLarge: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-  },
-  cancelButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#E5E7EB",
-  },
-  cancelButtonText: {
-    fontWeight: "800",
-    color: "#111827",
-  },
-  saveButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#111827",
-  },
-  saveButtonText: {
-    fontWeight: "800",
-    color: "#fff",
-  },
-  pressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
-  },
-  pressedOption: {
-    backgroundColor: "#F3F4F6",
-  },
-  subgroupSection: {
-    gap: 12,
-  },
-  subgroupSectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  subgroupSectionTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  addSubgroupButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: "#111827",
-  },
-  addSubgroupButtonText: {
-    color: "#fff",
-    fontWeight: "800",
-    fontSize: 13,
-  },
-  subgroupEditCard: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 16,
-    padding: 12,
-    backgroundColor: "#FAFAFA",
-    gap: 12,
-  },
-  subgroupEditHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  subgroupEditTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  removeSubgroupButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#FEE2E2",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  closeButton: {
-    marginTop: 12,
-    alignSelf: "flex-end",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#E5E7EB",
-  },
-  closeButtonText: {
-    fontWeight: "800",
-    color: "#111827",
-  },
-});
