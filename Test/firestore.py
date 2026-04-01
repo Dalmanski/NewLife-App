@@ -3,8 +3,8 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-collection_name = "users"
-document_id = "2"
+collection_name = "tasks"
+document_id = "K30tV4OzqYiM5F283mHY"
 
 # Path to your service account JSON
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +23,9 @@ db = firestore.client()
 
 doc_ref = db.collection(collection_name).document(document_id)
 doc = doc_ref.get()
+
+print(f'\nCollection Name: "{collection_name}"')
+print(f'Document ID: "{document_id}"\n')
 
 if doc.exists:
     data = doc.to_dict()

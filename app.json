@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "MyNewLifeApp",
-    "slug": "MyNewLifeApp",
+    "name": "NewLife Danao",
+    "slug": "newlife-danao",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/NL-icon.jpg",
     "scheme": "mynewlifeapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -38,7 +38,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,
