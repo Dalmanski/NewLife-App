@@ -136,15 +136,47 @@ const normalizeGroupArray = (value: unknown) => {
 
 const isAdminRole = (role: string) => role.toLowerCase().includes("admin");
 
+const formatDateDisplay = (date: Date) => {
+  const day = date.getDate();
+  const year = date.getFullYear();
+  const month = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ][date.getMonth()];
+  return `${month} ${day}, ${year}`;
+};
+
+const formatDeadlineText = (deadline?: string, deadlineAt?: Timestamp) => {
+  if (deadlineAt && typeof deadlineAt.toDate === "function") {
+    return formatDateDisplay(deadlineAt.toDate());
+  }
+
+  if (!deadline) return "";
+
+  const parsed = new Date(deadline);
+  if (!Number.isNaN(parsed.getTime())) {
+    return formatDateDisplay(parsed);
+  }
+
+  return deadline;
+};
+
 type TaskCardProps = {
   task: TaskItem;
   onOpen: (task: TaskItem) => void;
   onDelete?: (taskId: string) => void;
   onToggleChecklist: (taskId: string, checklistIndex: number, nextDone: boolean) => void;
   onStartDrag: (task: TaskItem, x: number, y: number, width: number, height: number) => void;
-  onMoveDrag: (x: number, y: number) => void;
-  onEndDrag: (x: number, y: number) => void;
-  isDragging: boolean;
   canManageTask: boolean;
   showGroupMeta: boolean;
 };
@@ -155,25 +187,12 @@ function TaskCard({
   onDelete,
   onToggleChecklist,
   onStartDrag,
-  onMoveDrag,
-  onEndDrag,
-  isDragging,
   canManageTask,
   showGroupMeta,
 }: TaskCardProps) {
   const [layout, setLayout] = useState({ width: 300, height: 120 });
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const longPressReady = useRef(false);
-  const moved = useRef(false);
-  const lastTouch = useRef({ x: 0, y: 0 });
+  const [showChecklist, setShowChecklist] = useState(false);
   const suppressOpen = useRef(false);
-
-  const clearTimer = () => {
-    if (pressTimer.current) {
-      clearTimeout(pressTimer.current);
-      pressTimer.current = null;
-    }
-  };
 
   const blockOpenBriefly = () => {
     suppressOpen.current = true;
@@ -182,96 +201,38 @@ function TaskCard({
     }, 150);
   };
 
-  useEffect(() => {
-    if (!isDragging) {
-      longPressReady.current = false;
-      moved.current = false;
-      clearTimer();
-    }
-  }, [isDragging]);
-
-  const responder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: (evt) => {
-          moved.current = false;
-          longPressReady.current = false;
-          lastTouch.current = {
-            x: evt.nativeEvent.pageX,
-            y: evt.nativeEvent.pageY,
-          };
-
-          clearTimer();
-          pressTimer.current = setTimeout(() => {
-            longPressReady.current = true;
-            onStartDrag(
-              task,
-              lastTouch.current.x,
-              lastTouch.current.y,
-              layout.width || 300,
-              layout.height || 120
-            );
-          }, 500);
-        },
-        onPanResponderMove: (evt, gestureState) => {
-          lastTouch.current = {
-            x: evt.nativeEvent.pageX,
-            y: evt.nativeEvent.pageY,
-          };
-
-          if (Math.abs(gestureState.dx) > 4 || Math.abs(gestureState.dy) > 4) {
-            moved.current = true;
-          }
-
-          if (longPressReady.current) {
-            onMoveDrag(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
-          }
-        },
-        onPanResponderRelease: (evt) => {
-          clearTimer();
-
-          if (longPressReady.current) {
-            onEndDrag(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
-            longPressReady.current = false;
-            return;
-          }
-
-          if (!moved.current && !suppressOpen.current && canManageTask) {
-            onOpen(task);
-          }
-        },
-        onPanResponderTerminate: (evt) => {
-          clearTimer();
-
-          if (longPressReady.current) {
-            onEndDrag(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
-            longPressReady.current = false;
-          }
-        },
-      }),
-    [canManageTask, layout.height, layout.width, onEndDrag, onMoveDrag, onOpen, onStartDrag, task]
-  );
-
   const checklistDone = task.checklist.filter((x) => x.done).length;
   const checklistTotal = task.checklist.length;
   const descriptionText =
     task.description && task.description.trim()
       ? task.description
       : "No description provided";
+  const formattedDeadline = formatDeadlineText(task.deadline, task.deadlineAt);
 
   return (
-    <Animated.View
-      {...responder.panHandlers}
+    <Pressable
       onLayout={(e) =>
         setLayout({
           width: e.nativeEvent.layout.width,
           height: e.nativeEvent.layout.height,
         })
       }
+      onPress={() => {
+        if (!suppressOpen.current && canManageTask) onOpen(task);
+      }}
+      onLongPress={(evt) => {
+        blockOpenBriefly();
+        onStartDrag(
+          task,
+          evt.nativeEvent.pageX,
+          evt.nativeEvent.pageY,
+          layout.width || 300,
+          layout.height || 120
+        );
+      }}
+      delayLongPress={500}
       className={`rounded-[22px] border border-slate-200 bg-white p-4 ${
-        isDragging ? "opacity-25" : ""
+        false ? "opacity-25" : ""
       }`}
       style={{
         gap: 12,
@@ -302,6 +263,7 @@ function TaskCard({
             onPressIn={blockOpenBriefly}
             onPress={() => onDelete(task.id)}
             className="h-8 w-8 items-center justify-center rounded-full bg-red-50"
+            hitSlop={8}
           >
             <Ionicons name="trash-outline" size={18} color="#b91c1c" />
           </Pressable>
@@ -310,18 +272,37 @@ function TaskCard({
 
       <Text className="text-[13px] leading-[19px] text-slate-600">{descriptionText}</Text>
 
-      {task.checklist.length > 0 ? (
-        <View style={{ gap: 10 }}>
-          <View className="flex-row items-center justify-between">
+      <View style={{ gap: 10 }}>
+        <View className="flex-row items-center justify-between">
+          <View className="flex-row items-center" style={{ gap: 8 }}>
             <View className="rounded-full bg-slate-100 px-2.5 py-1">
               <Text className="text-[11px] font-bold text-slate-600">
                 Checklist {checklistDone}/{checklistTotal}
               </Text>
             </View>
 
-            {task.deadline ? (
+            {checklistTotal > 0 ? (
+              <Pressable
+                onPressIn={blockOpenBriefly}
+                onPress={() => setShowChecklist((prev) => !prev)}
+                className="h-8 w-8 items-center justify-center rounded-full bg-slate-100"
+                hitSlop={8}
+              >
+                <Ionicons
+                  name={showChecklist ? "chevron-up" : "chevron-down"}
+                  size={18}
+                  color="#0f172a"
+                />
+              </Pressable>
+            ) : null}
+          </View>
+
+          <View className="flex-row items-center" style={{ gap: 8 }}>
+            {formattedDeadline ? (
               <View className="rounded-full bg-amber-50 px-2.5 py-1">
-                <Text className="text-[11px] font-bold text-amber-700">Due {task.deadline}</Text>
+                <Text className="text-[11px] font-bold text-amber-700">
+                  Due {formattedDeadline}
+                </Text>
               </View>
             ) : (
               <View className="rounded-full bg-slate-100 px-2.5 py-1">
@@ -329,58 +310,44 @@ function TaskCard({
               </View>
             )}
           </View>
-
-          {task.checklist.map((item, index) => (
-            <Pressable
-              key={`${task.id}-check-${index}`}
-              onPressIn={blockOpenBriefly}
-              onPress={() => onToggleChecklist(task.id, index, !item.done)}
-              className="flex-row items-center rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3"
-              style={({ pressed }) => [
-                pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
-              ]}
-            >
-              <View
-                className={`mr-3 h-6 w-6 items-center justify-center rounded-full border-2 ${
-                  item.done
-                    ? "border-slate-900 bg-slate-900"
-                    : "border-slate-300 bg-white"
-                }`}
-              >
-                {item.done ? (
-                  <Ionicons name="checkmark" size={15} color="#FFFFFF" />
-                ) : null}
-              </View>
-
-              <Text
-                className={`flex-1 text-[13px] leading-[18px] ${
-                  item.done ? "text-slate-400 line-through" : "text-slate-900"
-                }`}
-              >
-                {item.text}
-              </Text>
-            </Pressable>
-          ))}
         </View>
-      ) : (
-        <View className="flex-row items-center justify-between">
-          <View className="rounded-full bg-slate-100 px-2.5 py-1">
-            <Text className="text-[11px] font-bold text-slate-600">
-              Checklist {checklistDone}/{checklistTotal}
-            </Text>
+
+        {showChecklist && task.checklist.length > 0 ? (
+          <View style={{ gap: 8 }}>
+            {task.checklist.map((item, index) => (
+              <Pressable
+                key={`${task.id}-check-${index}`}
+                onPressIn={blockOpenBriefly}
+                onPress={() => onToggleChecklist(task.id, index, !item.done)}
+                className="flex-row items-center rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3"
+                style={({ pressed }) => [
+                  pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
+                ]}
+              >
+                <View
+                  className={`mr-3 h-6 w-6 items-center justify-center rounded-full border-2 ${
+                    item.done
+                      ? "border-slate-900 bg-slate-900"
+                      : "border-slate-300 bg-white"
+                  }`}
+                >
+                  {item.done ? (
+                    <Ionicons name="checkmark" size={15} color="#FFFFFF" />
+                  ) : null}
+                </View>
+
+                <Text
+                  className={`flex-1 text-[13px] leading-[18px] ${
+                    item.done ? "text-slate-400 line-through" : "text-slate-900"
+                  }`}
+                >
+                  {item.text}
+                </Text>
+              </Pressable>
+            ))}
           </View>
-
-          {task.deadline ? (
-            <View className="rounded-full bg-amber-50 px-2.5 py-1">
-              <Text className="text-[11px] font-bold text-amber-700">Due {task.deadline}</Text>
-            </View>
-          ) : (
-            <View className="rounded-full bg-slate-100 px-2.5 py-1">
-              <Text className="text-[11px] font-bold text-slate-500">No deadline</Text>
-            </View>
-          )}
-        </View>
-      )}
+        ) : null}
+      </View>
 
       {task.assignedMemberNames.length > 0 ? (
         <View className="flex-row flex-wrap items-center" style={{ gap: 6 }}>
@@ -403,7 +370,7 @@ function TaskCard({
           ) : null}
         </View>
       ) : null}
-    </Animated.View>
+    </Pressable>
   );
 }
 
@@ -928,6 +895,32 @@ export default function TaskBoard({
     [groupedTasks, loadTasks]
   );
 
+  const boardResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: () => !!dragStateRef.current,
+        onStartShouldSetPanResponderCapture: () => false,
+        onMoveShouldSetPanResponderCapture: () => !!dragStateRef.current,
+        onPanResponderMove: (evt) => {
+          if (dragStateRef.current) {
+            moveDrag(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
+          }
+        },
+        onPanResponderRelease: (evt) => {
+          if (dragStateRef.current) {
+            endDrag(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
+          }
+        },
+        onPanResponderTerminate: (evt) => {
+          if (dragStateRef.current) {
+            endDrag(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
+          }
+        },
+      }),
+    [endDrag, moveDrag]
+  );
+
   const renderColumn = (status: TaskStatus, ref: React.RefObject<View>) => {
     const data = groupedTasks[status];
     const isDropTarget = (() => {
@@ -968,8 +961,8 @@ export default function TaskBoard({
 
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerClassName="pb-5"
-          contentContainerStyle={{ gap: 12 }}
+          nestedScrollEnabled
+          contentContainerStyle={{ gap: 12, paddingBottom: 20 }}
         >
           {data.length === 0 ? (
             <View className="items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-8">
@@ -988,9 +981,6 @@ export default function TaskBoard({
               onDelete={canManageTasks ? deleteTask : undefined}
               onToggleChecklist={toggleChecklist}
               onStartDrag={startDrag}
-              onMoveDrag={moveDrag}
-              onEndDrag={endDrag}
-              isDragging={dragState?.task.id === item.id}
               canManageTask={canManageTasks}
               showGroupMeta={!hasGroupContext}
             />
@@ -1031,7 +1021,7 @@ export default function TaskBoard({
   const greetingName = currentMemberName || "Member";
 
   return (
-    <View className="flex-1 bg-slate-50 pt-2">
+    <View className="flex-1 bg-slate-50 pt-2" {...boardResponder.panHandlers}>
       <View className="px-4 pb-3">
         <View className="rounded-[24px] bg-white px-4 py-4 shadow-sm">
           <View className="flex-row items-start justify-between gap-3">
@@ -1065,8 +1055,8 @@ export default function TaskBoard({
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerClassName="px-4 pb-28"
-        contentContainerStyle={{ gap: 14 }}
+        nestedScrollEnabled
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 28, gap: 14 }}
       >
         {renderColumn("todo", todoColRef)}
         {renderColumn("doing", doingColRef)}
@@ -1127,8 +1117,7 @@ export default function TaskBoard({
                 showsVerticalScrollIndicator={false}
                 nestedScrollEnabled
                 keyboardShouldPersistTaps="handled"
-                contentContainerClassName="pb-6"
-                contentContainerStyle={{ gap: 12 }}
+                contentContainerStyle={{ gap: 12, paddingBottom: 24 }}
               >
                 <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
                   <Text className="text-[13px] font-extrabold text-slate-900">Title</Text>
@@ -1165,7 +1154,7 @@ export default function TaskBoard({
                   >
                     <Ionicons name="calendar-outline" size={18} color="#111827" />
                     <Text className="ml-2 text-[15px] font-bold text-slate-900">
-                      {deadline.toISOString().slice(0, 10)}
+                      {formatDateDisplay(deadline)}
                     </Text>
                   </Pressable>
 

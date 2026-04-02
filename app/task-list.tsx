@@ -1,28 +1,27 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import {
-    Timestamp,
-    addDoc,
-    collection,
-    deleteDoc,
-    doc,
-    getDocs,
-    query,
-    updateDoc,
-    where,
+  Timestamp,
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  query,
+  updateDoc,
+  where,
 } from "firebase/firestore";
 import { useCallback, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Modal,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { db } from "../lib/firebaseConfig";
 
@@ -39,7 +38,6 @@ type TaskItem = {
 };
 
 export default function TaskList() {
-  const router = useRouter();
   const params = useLocalSearchParams<{
     groupId?: string;
     groupName?: string;
@@ -53,10 +51,8 @@ export default function TaskList() {
 
   const [loading, setLoading] = useState(true);
   const [savingTask, setSavingTask] = useState(false);
-
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [showTaskModal, setShowTaskModal] = useState(false);
-
   const [taskTitle, setTaskTitle] = useState("");
   const [taskNotes, setTaskNotes] = useState("");
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
@@ -204,44 +200,42 @@ export default function TaskList() {
 
   if (!canLoad) {
     return (
-      <View style={[styles.screen, styles.center]}>
-        <Text style={styles.errorText}>Missing group information.</Text>
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Go Back</Text>
-        </Pressable>
+      <View className="flex-1 items-center justify-center bg-[#F7F8FA] p-5">
+        <Text className="mb-4 text-[#6B7280]">Missing group information.</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.headerBack}>
-          <Ionicons name="arrow-back" size={20} color="#111827" />
-        </Pressable>
-
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Task List</Text>
-          <Text style={styles.subtitle}>{headerStatus}</Text>
+    <View className="flex-1 bg-[#F7F8FA]">
+      <View className="flex-row items-center gap-3 px-[18px] pb-2.5 pt-[18px]">
+        <View className="flex-1">
+          <Text className="text-2xl font-extrabold text-[#111827]">Task List</Text>
+          <Text className="mt-0.5 text-[13px] font-semibold text-[#6B7280]">
+            {headerStatus}
+          </Text>
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView
+        className="flex-1"
+        contentContainerClassName="gap-3 px-[18px] pb-[110px]"
+      >
         {loading ? (
-          <View style={{ paddingVertical: 24 }}>
+          <View className="py-6">
             <ActivityIndicator />
           </View>
         ) : tasks.length === 0 ? (
-          <Text style={styles.emptyText}>No tasks yet</Text>
+          <Text className="pt-6 text-center text-[#6B7280]">No tasks yet</Text>
         ) : (
           tasks.map((task) => (
-            <View key={task.id} style={styles.card}>
+            <View
+              key={task.id}
+              className="flex-row items-center gap-3 rounded-2xl border border-[#E5E7EB] bg-white p-3.5"
+            >
               <Pressable
                 onPress={() => toggleDone(task)}
-                style={({ pressed }) => [
-                  styles.checkButton,
-                  pressed && styles.pressed,
-                ]}
+                className="h-7 w-7 items-center justify-center"
               >
                 <Ionicons
                   name={task.isDone ? "checkmark-circle" : "ellipse-outline"}
@@ -250,34 +244,36 @@ export default function TaskList() {
                 />
               </Pressable>
 
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.cardTitle, task.isDone && styles.doneText]}>
+              <View className="flex-1">
+                <Text
+                  className={`text-base font-extrabold text-[#111827] ${
+                    task.isDone ? "text-[#9CA3AF] line-through" : ""
+                  }`}
+                >
                   {task.title}
                 </Text>
                 {!!task.notes && (
-                  <Text style={[styles.cardNotes, task.isDone && styles.doneText]}>
+                  <Text
+                    className={`mt-1 text-[13px] leading-[18px] text-[#4B5563] ${
+                      task.isDone ? "text-[#9CA3AF] line-through" : ""
+                    }`}
+                  >
                     {task.notes}
                   </Text>
                 )}
               </View>
 
-              <View style={styles.actionRow}>
+              <View className="flex-row items-center gap-2">
                 <Pressable
                   onPress={() => openEditModal(task)}
-                  style={({ pressed }) => [
-                    styles.actionButton,
-                    pressed && styles.pressed,
-                  ]}
+                  className="h-9 w-9 items-center justify-center rounded-full bg-[#F3F4F6]"
                 >
                   <Ionicons name="create-outline" size={18} color="#111827" />
                 </Pressable>
 
                 <Pressable
                   onPress={() => deleteTask(task)}
-                  style={({ pressed }) => [
-                    styles.actionButton,
-                    pressed && styles.pressed,
-                  ]}
+                  className="h-9 w-9 items-center justify-center rounded-full bg-[#F3F4F6]"
                 >
                   <Ionicons name="trash-outline" size={18} color="#DC2626" />
                 </Pressable>
@@ -289,7 +285,7 @@ export default function TaskList() {
 
       <Pressable
         onPress={openCreateModal}
-        style={({ pressed }) => [styles.fab, pressed && styles.pressed]}
+        className="absolute bottom-5 right-5 h-[60px] w-[60px] items-center justify-center rounded-full bg-[#111827]"
       >
         <Ionicons name="add" size={32} color="#fff" />
       </Pressable>
@@ -300,54 +296,65 @@ export default function TaskList() {
         animationType="slide"
         onRequestClose={() => setShowTaskModal(false)}
       >
-        <Pressable style={styles.backdrop} onPress={() => setShowTaskModal(false)}>
-          <Pressable style={styles.sheet} onPress={() => {}}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>
+        <Pressable
+          className="flex-1 justify-end bg-black/45"
+          onPress={() => setShowTaskModal(false)}
+        >
+          <Pressable
+            onPress={() => {}}
+            className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2.5"
+          >
+            <View className="mb-3.5 h-[5px] w-11 self-center rounded-full bg-[#D1D5DB]" />
+            <Text className="mb-3.5 text-center text-xl font-extrabold text-[#111827]">
               {editingTask ? "Edit Task" : "New Task"}
             </Text>
 
-            <ScrollView contentContainerStyle={styles.sheetContent}>
-              <View style={styles.fieldBlock}>
-                <Text style={styles.fieldLabel}>Title</Text>
+            <ScrollView
+              className="max-h-full"
+              contentContainerClassName="gap-3 pb-2.5"
+            >
+              <View className="gap-2">
+                <Text className="text-[13px] font-extrabold text-[#111827]">
+                  Title
+                </Text>
                 <TextInput
                   value={taskTitle}
                   onChangeText={setTaskTitle}
                   placeholder="Task title"
-                  style={styles.input}
+                  className="rounded-[14px] border border-[#E5E7EB] bg-white px-3.5 py-3 text-[15px] text-[#111827]"
                 />
               </View>
 
-              <View style={styles.fieldBlock}>
-                <Text style={styles.fieldLabel}>Notes</Text>
+              <View className="gap-2">
+                <Text className="text-[13px] font-extrabold text-[#111827]">
+                  Notes
+                </Text>
                 <TextInput
                   value={taskNotes}
                   onChangeText={setTaskNotes}
                   placeholder="Optional notes"
                   multiline
                   textAlignVertical="top"
-                  style={[styles.input, styles.textArea]}
+                  className="min-h-[96px] rounded-[14px] border border-[#E5E7EB] bg-white px-3.5 py-3 text-[15px] text-[#111827]"
                 />
               </View>
 
-              <View style={styles.actions}>
+              <View className="flex-row justify-end gap-2.5 pt-1">
                 <Pressable
                   onPress={() => setShowTaskModal(false)}
-                  style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+                  className="rounded-[14px] bg-[#E5E7EB] px-4 py-3"
                 >
-                  <Text style={styles.cancelText}>Cancel</Text>
+                  <Text className="font-extrabold text-[#111827]">Cancel</Text>
                 </Pressable>
 
                 <Pressable
                   onPress={saveTask}
                   disabled={savingTask}
-                  style={({ pressed }) => [
-                    styles.saveButton,
-                    pressed && styles.pressed,
-                    savingTask && { opacity: 0.75 },
-                  ]}
+                  className={`rounded-[14px] bg-[#111827] px-4 py-3 ${
+                    savingTask ? "opacity-75" : ""
+                  }`}
                 >
-                  <Text style={styles.saveText}>
+                  <Text className="font-extrabold text-white">
                     {savingTask ? "Saving..." : editingTask ? "Update" : "Create"}
                   </Text>
                 </Pressable>
@@ -359,212 +366,3 @@ export default function TaskList() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: "#F7F8FA",
-  },
-  center: {
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  header: {
-    paddingTop: 18,
-    paddingHorizontal: 18,
-    paddingBottom: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  headerBack: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  subtitle: {
-    marginTop: 2,
-    color: "#6B7280",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  container: {
-    padding: 18,
-    paddingBottom: 110,
-    gap: 12,
-  },
-  emptyText: {
-    color: "#6B7280",
-    textAlign: "center",
-    paddingTop: 24,
-  },
-  card: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 16,
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  checkButton: {
-    width: 28,
-    height: 28,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  cardNotes: {
-    marginTop: 4,
-    color: "#4B5563",
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  doneText: {
-    textDecorationLine: "line-through",
-    color: "#9CA3AF",
-  },
-  actionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  actionButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#F3F4F6",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  fab: {
-    position: "absolute",
-    right: 20,
-    bottom: 20,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: "#111827",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 18,
-    maxHeight: "90%",
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 44,
-    height: 5,
-    borderRadius: 99,
-    backgroundColor: "#D1D5DB",
-    marginBottom: 14,
-  },
-  sheetTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#111827",
-    textAlign: "center",
-    marginBottom: 14,
-  },
-  sheetContent: {
-    gap: 12,
-    paddingBottom: 10,
-  },
-  fieldBlock: {
-    gap: 8,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: "#111827",
-    backgroundColor: "#fff",
-  },
-  textArea: {
-    minHeight: 96,
-  },
-  actions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 10,
-    paddingTop: 4,
-  },
-  cancelButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#E5E7EB",
-  },
-  cancelText: {
-    fontWeight: "800",
-    color: "#111827",
-  },
-  saveButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#111827",
-  },
-  saveText: {
-    fontWeight: "800",
-    color: "#fff",
-  },
-  pressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
-  },
-  errorText: {
-    color: "#6B7280",
-    marginBottom: 14,
-  },
-  backButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: "#111827",
-  },
-  backButtonText: {
-    color: "#fff",
-    fontWeight: "800",
-  },
-});

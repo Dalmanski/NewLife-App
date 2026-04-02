@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { collection, getDocs, query, where } from "firebase/firestore";
@@ -22,6 +23,7 @@ export default function Login() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
 
@@ -105,12 +107,12 @@ export default function Login() {
           <View className="gap-3">
             <View>
               <Text className="mb-2 text-sm font-semibold text-gray-700">
-                Name
+                Nickname
               </Text>
               <TextInput
                 value={name}
                 onChangeText={setName}
-                placeholder="Enter your name"
+                placeholder="Enter your nickname"
                 placeholderTextColor="#9AA4B2"
                 className="rounded-[14px] border border-[#D7DEE8] bg-[#F9FBFD] px-4 py-[14px] text-base text-gray-900"
                 autoCapitalize="none"
@@ -124,19 +126,32 @@ export default function Login() {
               <Text className="mb-2 text-sm font-semibold text-gray-700">
                 Password
               </Text>
-              <TextInput
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Enter your password"
-                placeholderTextColor="#9AA4B2"
-                secureTextEntry
-                className="rounded-[14px] border border-[#D7DEE8] bg-[#F9FBFD] px-4 py-[14px] text-base text-gray-900"
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoComplete="off"
-                returnKeyType="done"
-                onSubmitEditing={handleLogin}
-              />
+              <View className="flex-row items-center rounded-[14px] border border-[#D7DEE8] bg-[#F9FBFD] pl-4 pr-2">
+                <TextInput
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Enter your password"
+                  placeholderTextColor="#9AA4B2"
+                  secureTextEntry={!showPassword}
+                  className="flex-1 py-[14px] text-base text-gray-900"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="off"
+                  returnKeyType="done"
+                  onSubmitEditing={handleLogin}
+                />
+                <Pressable
+                  onPress={() => setShowPassword((prev) => !prev)}
+                  className="p-2"
+                  hitSlop={10}
+                >
+                  <Ionicons
+                    name={showPassword ? "eye-off-outline" : "eye-outline"}
+                    size={22}
+                    color="#6B7280"
+                  />
+                </Pressable>
+              </View>
             </View>
 
             <Pressable
