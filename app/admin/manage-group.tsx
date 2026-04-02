@@ -96,6 +96,8 @@ const getErrorMessage = (error: unknown) => {
 
 const makeLocalId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
+const normalizeIds = (ids: string[]) => Array.from(new Set(ids.filter(Boolean)));
+
 const indexToLetters = (index: number) => {
   let n = index;
   let result = "";
@@ -177,18 +179,65 @@ export default function ManageGroup() {
     return users.filter((u) => `${u.name} ${u.role}`.toLowerCase().includes(q));
   }, [users, pickerSearch]);
 
+  const getForbiddenMemberIds = useCallback(
+    (subgroupIndex: number | null) => {
+      const ids = new Set<string>();
+
+      if (selectedLeaderId) {
+        ids.add(selectedLeaderId);
+      }
+
+      subgroupDrafts.forEach((draft, index) => {
+        if (draft.leaderId) {
+          ids.add(draft.leaderId);
+        }
+
+        if (subgroupIndex === null || index !== subgroupIndex) {
+          draft.memberIds.forEach((memberId) => ids.add(memberId));
+        }
+      });
+
+      return ids;
+    },
+    [selectedLeaderId, subgroupDrafts]
+  );
+
+  const getForbiddenSubgroupMemberIds = useCallback(
+    (subgroupIndex: number | null) => {
+      const ids = new Set<string>();
+
+      if (selectedLeaderId) {
+        ids.add(selectedLeaderId);
+      }
+
+      subgroupDrafts.forEach((draft, index) => {
+        if (draft.leaderId) {
+          ids.add(draft.leaderId);
+        }
+
+        if (subgroupIndex === null || index !== subgroupIndex) {
+          draft.memberIds.forEach((memberId) => ids.add(memberId));
+        }
+      });
+
+      return ids;
+    },
+    [selectedLeaderId, subgroupDrafts]
+  );
+
   const takenMemberIds = useMemo(() => {
     if (pickerMode !== "subgroupMembers" || pickerSubgroupIndex === null) {
       return new Set<string>();
     }
+    return getForbiddenMemberIds(pickerSubgroupIndex);
+  }, [pickerMode, pickerSubgroupIndex, getForbiddenMemberIds]);
 
-    const ids = new Set<string>();
-    subgroupDrafts.forEach((draft, index) => {
-      if (index === pickerSubgroupIndex) return;
-      draft.memberIds.forEach((memberId) => ids.add(memberId));
-    });
-    return ids;
-  }, [pickerMode, pickerSubgroupIndex, subgroupDrafts]);
+  const subgroupMemberBlockedIds = useMemo(() => {
+    if (pickerMode !== "subgroupMembers" || pickerSubgroupIndex === null) {
+      return new Set<string>();
+    }
+    return getForbiddenSubgroupMemberIds(pickerSubgroupIndex);
+  }, [pickerMode, pickerSubgroupIndex, getForbiddenSubgroupMemberIds]);
 
   const getUniqueGroupMemberIds = useCallback((group: GroupItem) => {
     const ids = group.subgroups.flatMap((subgroup) => subgroup.memberIds ?? []);
@@ -222,19 +271,24 @@ export default function ManageGroup() {
 
       const lookup = new Map(userData.map((u) => [u.id, u]));
 
-      const parseSubgroups = (rawSubgroups: any[]): SubgroupItem[] => {
+      const parseSubgroups = (rawSubgroups: any[], groupLeaderId: string): SubgroupItem[] => {
         if (!Array.isArray(rawSubgroups)) return [];
         return rawSubgroups
           .map((subgroup: any, index: number) => {
-            const memberIds = Array.isArray(subgroup?.memberIds)
-              ? subgroup.memberIds.map((x: any) => String(x)).filter(Boolean)
-              : [];
+            const leaderId = String(subgroup?.leaderId ?? "");
+            const memberIds = normalizeIds(
+              Array.isArray(subgroup?.memberIds)
+                ? subgroup.memberIds.map((x: any) => String(x))
+                : []
+            ).filter((id) => id !== leaderId && id !== groupLeaderId);
+
             const storedMemberNames = Array.isArray(subgroup?.memberNames)
               ? subgroup.memberNames.map((x: any) => String(x)).filter(Boolean)
               : [];
+
             const memberNames =
               storedMemberNames.length > 0
-                ? storedMemberNames
+                ? storedMemberNames.slice(0, memberIds.length)
                 : memberIds
                     .map((memberId: string) => lookup.get(memberId)?.name ?? "")
                     .filter(Boolean);
@@ -242,7 +296,7 @@ export default function ManageGroup() {
             return {
               id: String(subgroup?.id ?? `${Date.now()}-${index}`),
               name: `Group ${indexToLetters(index)}`,
-              leaderId: String(subgroup?.leaderId ?? ""),
+              leaderId,
               leaderName: String(subgroup?.leaderName ?? ""),
               leaderRole: String(subgroup?.leaderRole ?? ""),
               memberIds,
@@ -255,17 +309,18 @@ export default function ManageGroup() {
       const ministryData: GroupItem[] = ministrySnap.docs
         .map((d) => {
           const data = d.data() as any;
+          const leaderId = String(data?.leaderId ?? "");
           return {
             id: d.id,
             kind: "ministry" as const,
             name: String(data?.name ?? "").trim(),
             description: String(data?.description ?? "").trim(),
-            leaderId: String(data?.leaderId ?? ""),
+            leaderId,
             leaderName: String(data?.leaderName ?? ""),
             leaderRole: String(data?.leaderRole ?? ""),
             createdAt: data?.createdAt,
             isActive: data?.isActive ?? true,
-            subgroups: parseSubgroups(data?.subgroups ?? []),
+            subgroups: parseSubgroups(data?.subgroups ?? [], leaderId),
           };
         })
         .filter((x) => x.name)
@@ -274,17 +329,18 @@ export default function ManageGroup() {
       const coreGroupData: GroupItem[] = coreGroupSnap.docs
         .map((d) => {
           const data = d.data() as any;
+          const leaderId = String(data?.leaderId ?? "");
           return {
             id: d.id,
             kind: "coreGroup" as const,
             name: String(data?.name ?? "").trim(),
             description: String(data?.description ?? "").trim(),
-            leaderId: String(data?.leaderId ?? ""),
+            leaderId,
             leaderName: String(data?.leaderName ?? ""),
             leaderRole: String(data?.leaderRole ?? ""),
             createdAt: data?.createdAt,
             isActive: data?.isActive ?? true,
-            subgroups: parseSubgroups(data?.subgroups ?? []),
+            subgroups: parseSubgroups(data?.subgroups ?? [], leaderId),
           };
         })
         .filter((x) => x.name)
@@ -330,7 +386,9 @@ export default function ManageGroup() {
         ? group.subgroups.map((subgroup) => ({
             localId: subgroup.id || makeLocalId(),
             leaderId: subgroup.leaderId ?? "",
-            memberIds: subgroup.memberIds,
+            memberIds: normalizeIds(subgroup.memberIds).filter(
+              (id) => id !== subgroup.leaderId && id !== (group.leaderId ?? "")
+            ),
           }))
         : [{ localId: makeLocalId(), leaderId: "", memberIds: [] }]
     );
@@ -350,7 +408,11 @@ export default function ManageGroup() {
         subgroupDrafts[subgroupIndex]?.leaderId ? [subgroupDrafts[subgroupIndex].leaderId] : []
       );
     } else if (mode === "subgroupMembers" && subgroupIndex !== null) {
-      setPickerSelectedIds(subgroupDrafts[subgroupIndex]?.memberIds ?? []);
+      const currentMembers = normalizeIds(subgroupDrafts[subgroupIndex]?.memberIds ?? []);
+      const allowedMembers = currentMembers.filter(
+        (id) => !getForbiddenMemberIds(subgroupIndex).has(id)
+      );
+      setPickerSelectedIds(allowedMembers);
     } else {
       setPickerSelectedIds([]);
     }
@@ -367,8 +429,14 @@ export default function ManageGroup() {
   const confirmUserPicker = () => {
     if (pickerMode === "groupLeader") {
       const chosenId = pickerSelectedIds[0] ?? "";
-      if (!chosenId) return Alert.alert("Error", "Please select a leader");
+      if (!chosenId) return Alert.alert("Error", "Please select a head");
       setSelectedLeaderId(chosenId);
+      setSubgroupDrafts((prev) =>
+        prev.map((item) => ({
+          ...item,
+          memberIds: item.memberIds.filter((id) => id !== chosenId),
+        }))
+      );
       closeUserPicker();
       return;
     }
@@ -388,9 +456,11 @@ export default function ManageGroup() {
 
     if (pickerMode === "subgroupMembers") {
       if (pickerSubgroupIndex === null) return;
+      const blockedIds = getForbiddenMemberIds(pickerSubgroupIndex);
+      const allowedIds = normalizeIds(pickerSelectedIds).filter((id) => !blockedIds.has(id));
       setSubgroupDrafts((prev) =>
         prev.map((item, index) =>
-          index === pickerSubgroupIndex ? { ...item, memberIds: [...pickerSelectedIds] } : item
+          index === pickerSubgroupIndex ? { ...item, memberIds: allowedIds } : item
         )
       );
       closeUserPicker();
@@ -423,6 +493,12 @@ export default function ManageGroup() {
       return;
     }
 
+    if (pickerMode === "subgroupLeader") {
+      if (subgroupMemberBlockedIds.has(userId) && pickerSelectedIds[0] !== userId) {
+        return;
+      }
+    }
+
     if (pickerSelectedIds[0] === userId) {
       setPickerSelectedIds([]);
       return;
@@ -440,11 +516,11 @@ export default function ManageGroup() {
     }
 
     if (!selectedLeaderId) {
-      return Alert.alert("Error", "Please select a leader");
+      return Alert.alert("Error", "Please select a head");
     }
 
     const leader = users.find((u) => u.id === selectedLeaderId);
-    if (!leader) return Alert.alert("Error", "Selected leader not found");
+    if (!leader) return Alert.alert("Error", "Selected head not found");
 
     if (subgroupDrafts.length === 0) {
       return Alert.alert("Error", "Please add at least one subgroup");
@@ -460,9 +536,49 @@ export default function ManageGroup() {
       }
     }
 
+    const subgroupMemberIds = normalizeIds(
+      subgroupDrafts.flatMap((subgroup) => subgroup.memberIds ?? [])
+    );
+
+    if (subgroupMemberIds.includes(selectedLeaderId)) {
+      return Alert.alert("Error", "Head cannot be included as a subgroup member.");
+    }
+
+    const duplicateLeaderCheck = new Set<string>();
+    for (let i = 0; i < subgroupDrafts.length; i++) {
+      const leaderId = subgroupDrafts[i].leaderId;
+      if (duplicateLeaderCheck.has(leaderId)) {
+        return Alert.alert(
+          "Error",
+          `Leader for Group ${indexToLetters(i)} is already used in another subgroup.`
+        );
+      }
+      duplicateLeaderCheck.add(leaderId);
+    }
+
     const seenMemberIds = new Set<string>();
     for (let i = 0; i < subgroupDrafts.length; i++) {
-      for (const memberId of subgroupDrafts[i].memberIds) {
+      const subgroup = subgroupDrafts[i];
+
+      if (subgroup.memberIds.includes(subgroup.leaderId)) {
+        return Alert.alert(
+          "Error",
+          `Group ${indexToLetters(i)} leader cannot also be a member of the same subgroup.`
+        );
+      }
+
+      for (const memberId of subgroup.memberIds) {
+        if (memberId === selectedLeaderId) {
+          return Alert.alert("Error", "Head cannot be a subgroup member.");
+        }
+
+        if (subgroup.leaderId === memberId) {
+          return Alert.alert(
+            "Error",
+            `Group ${indexToLetters(i)} leader cannot be repeated as a member.`
+          );
+        }
+
         if (seenMemberIds.has(memberId)) {
           const memberName = users.find((u) => u.id === memberId)?.name ?? "A member";
           return Alert.alert(
@@ -500,8 +616,14 @@ export default function ManageGroup() {
           leaderId: subgroupLeader?.id ?? "",
           leaderName: subgroupLeader?.name ?? "",
           leaderRole: subgroupLeader?.role ?? "",
-          memberIds: Array.from(new Set(subgroup.memberIds)),
-          memberNames: subgroupMembers.map((member) => member.name),
+          memberIds: normalizeIds(
+            subgroup.memberIds.filter(
+              (memberId) => memberId !== subgroup.leaderId && memberId !== selectedLeaderId
+            )
+          ),
+          memberNames: subgroupMembers
+            .filter((member) => member.id !== subgroup.leaderId && member.id !== selectedLeaderId)
+            .map((member) => member.name),
           createdAt: Timestamp.now(),
           updatedAt: Timestamp.now(),
         };
@@ -593,7 +715,10 @@ export default function ManageGroup() {
       setShowAddModal(false);
       await loadData();
     } catch (error) {
-      Alert.alert("Error", `Failed to save ${activeInfo.label.toLowerCase()}\n${getErrorMessage(error)}`);
+      Alert.alert(
+        "Error",
+        `Failed to save ${activeInfo.label.toLowerCase()}\n${getErrorMessage(error)}`
+      );
     } finally {
       setSavingGroup(false);
     }
@@ -615,7 +740,7 @@ export default function ManageGroup() {
 
   const selectedPickerTitle =
     pickerMode === "groupLeader"
-      ? `Select ${activeInfo.label} Leader`
+      ? `Select ${activeInfo.label} Head`
       : pickerMode === "subgroupLeader"
         ? `Select Group ${
             pickerSubgroupIndex !== null ? indexToLetters(pickerSubgroupIndex) : ""
@@ -819,11 +944,12 @@ export default function ManageGroup() {
         animationType="slide"
         onRequestClose={() => setShowAddModal(false)}
       >
-        <Pressable
-          className="flex-1 justify-end bg-black/45"
-          onPress={() => setShowAddModal(false)}
-        >
-          <Pressable className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2.5">
+        <View className="flex-1 justify-end">
+          <Pressable
+            className="absolute inset-0 bg-black/45"
+            onPress={() => setShowAddModal(false)}
+          />
+          <View className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2.5">
             <View className="mb-3 self-center h-[5px] w-11 rounded-full bg-gray-300" />
             <Text className="mb-3 text-center text-xl font-extrabold text-gray-900">
               {editingGroup
@@ -833,7 +959,12 @@ export default function ManageGroup() {
                   : "New Core Group"}
             </Text>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="gap-3 pb-2.5">
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              contentContainerClassName="gap-3 pb-2.5"
+            >
               <View className="gap-2">
                 <Text className="text-[13px] font-extrabold text-gray-900">Name</Text>
                 <TextInput
@@ -857,7 +988,7 @@ export default function ManageGroup() {
               </View>
 
               <View className="gap-2">
-                <Text className="text-[13px] font-extrabold text-gray-900">Leader</Text>
+                <Text className="text-[13px] font-extrabold text-gray-900">Head</Text>
                 <Pressable
                   onPress={() => openUserPicker("groupLeader")}
                   className="flex-row items-center justify-between gap-2 rounded-[14px] border border-gray-200 bg-white px-4 py-3"
@@ -1008,8 +1139,8 @@ export default function ManageGroup() {
                 </Pressable>
               </View>
             </ScrollView>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
 
       <Modal
@@ -1018,8 +1149,9 @@ export default function ManageGroup() {
         animationType="slide"
         onRequestClose={closeUserPicker}
       >
-        <Pressable className="flex-1 justify-end bg-black/45" onPress={closeUserPicker}>
-          <Pressable className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2.5">
+        <View className="flex-1 justify-end">
+          <Pressable className="absolute inset-0 bg-black/45" onPress={closeUserPicker} />
+          <View className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2.5">
             <View className="mb-3 self-center h-[5px] w-11 rounded-full bg-gray-300" />
             <Text className="mb-3 text-center text-xl font-extrabold text-gray-900">
               {selectedPickerTitle}
@@ -1036,7 +1168,12 @@ export default function ManageGroup() {
               />
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="gap-2.5 pb-2">
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              contentContainerClassName="gap-2.5 pb-2"
+            >
               {filteredUsers.length === 0 ? (
                 <Text className="py-5 text-center text-gray-500">No users found</Text>
               ) : (
@@ -1047,15 +1184,22 @@ export default function ManageGroup() {
                     takenMemberIds.has(user.id) &&
                     !active;
 
+                  const subgroupLeaderDisabled =
+                    pickerMode === "subgroupLeader" &&
+                    subgroupMemberBlockedIds.has(user.id) &&
+                    !active;
+
+                  const isDisabled = disabled || subgroupLeaderDisabled;
+
                   return (
                     <Pressable
                       key={user.id}
                       onPress={() => {
-                        if (disabled) return;
+                        if (isDisabled) return;
                         togglePickerUser(user.id);
                       }}
                       className={`flex-row items-center gap-3 rounded-[14px] border p-3 ${
-                        disabled
+                        isDisabled
                           ? "border-gray-100 bg-gray-50 opacity-50"
                           : active
                             ? "border-blue-200 bg-blue-50"
@@ -1075,9 +1219,9 @@ export default function ManageGroup() {
                             {user.role}
                           </Text>
                         )}
-                        {disabled ? (
+                        {isDisabled ? (
                           <Text className="mt-0.5 text-[12px] font-semibold text-red-500">
-                            Already selected in another subgroup
+                            Already used in subgroup
                           </Text>
                         ) : null}
                       </View>
@@ -1113,8 +1257,8 @@ export default function ManageGroup() {
                 </Text>
               </Pressable>
             </View>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
     </View>
   );

@@ -21,13 +21,16 @@ import {
 import { db } from "../../lib/firebaseConfig";
 
 type MemberStatus = "unregister" | "pending" | "register";
+type MemberRole = "member" | "admin";
 type SortField = "name" | "idx";
 type SortDirection = "asc" | "desc";
-type ActiveSelector = "ministry" | "coreGroup" | "status" | null;
+type ActiveSelector = "ministry" | "coreGroup" | "status" | "civilStatus" | "role" | null;
 
 type Member = {
   id: string;
   name: string;
+  firstName?: string;
+  lastName?: string;
   fullName?: string;
   password?: string;
   contact?: string;
@@ -35,7 +38,7 @@ type Member = {
   ministry: string[];
   coreGroup: string[];
   status: MemberStatus;
-  role?: string;
+  role?: MemberRole;
   idx?: number;
 };
 
@@ -56,18 +59,35 @@ const normalizeStatus = (value: unknown): MemberStatus => {
   return "unregister";
 };
 
+const normalizeRole = (value: unknown): MemberRole => {
+  const role = String(value ?? "").trim().toLowerCase();
+  if (role === "admin") return "admin";
+  return "member";
+};
+
 const normalizeNA = (value: unknown) => {
   const text = String(value ?? "").trim();
   if (!text || text.toLowerCase() === "na") return "NA";
   return text;
 };
 
+const splitFullName = (value: unknown) => {
+  const text = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!text) return { firstName: "", lastName: "" };
+  const parts = text.split(" ");
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" "),
+  };
+};
+
 const emptyForm = {
   name: "",
-  fullName: "",
+  firstName: "",
+  lastName: "",
   password: "",
   contact: "",
-  civilStatus: "",
 };
 
 const statusLabel: Record<MemberStatus, string> = {
@@ -82,10 +102,29 @@ const statusColor: Record<MemberStatus, string> = {
   register: "#16A34A",
 };
 
+const roleLabel: Record<MemberRole, string> = {
+  member: "Member",
+  admin: "Admin",
+};
+
+const roleOptions: OptionItem[] = [
+  { id: "member", name: "Member" },
+  { id: "admin", name: "Admin" },
+];
+
 const statusOptions: { id: MemberStatus; name: string }[] = [
   { id: "unregister", name: "Unregister" },
   { id: "pending", name: "Pending" },
   { id: "register", name: "Register" },
+];
+
+const civilStatusOptions: OptionItem[] = [
+  { id: "Single", name: "Single" },
+  { id: "Married", name: "Married" },
+  { id: "Widowed", name: "Widowed" },
+  { id: "Separated", name: "Separated" },
+  { id: "Divorced", name: "Divorced" },
+  { id: "NA", name: "NA" },
 ];
 
 export default function ManageMembers() {
@@ -103,6 +142,9 @@ export default function ManageMembers() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [selectedStatus, setSelectedStatus] = useState<MemberStatus>("unregister");
+  const [selectedCivilStatus, setSelectedCivilStatus] = useState<string>("NA");
+  const [selectedRole, setSelectedRole] = useState<MemberRole>("member");
+  const [showPassword, setShowPassword] = useState(false);
 
   const [ministryOptions, setMinistryOptions] = useState<OptionItem[]>([]);
   const [coreGroupOptions, setCoreGroupOptions] = useState<OptionItem[]>([]);
@@ -117,24 +159,29 @@ export default function ManageMembers() {
   const load = async () => {
     const snap = await getDocs(collection(db, "users"));
     setItems(
-      snap.docs
-        .map((d) => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            name: String(data?.name ?? ""),
-            fullName: String(data?.fullName ?? ""),
-            password: String(data?.password ?? ""),
-            contact: normalizeNA(data?.contact),
-            civilStatus: normalizeNA(data?.civilStatus),
-            ministry: normalizeArray(data?.ministry),
-            coreGroup: normalizeArray(data?.coreGroup),
-            status: normalizeStatus(data?.status),
-            role: String(data?.role ?? ""),
-            idx: typeof data?.idx === "number" ? data.idx : undefined,
-          };
-        })
-        .filter((x) => x.role !== "admin")
+      snap.docs.map((d) => {
+        const data = d.data() as any;
+        const firstName = String(data?.firstName ?? "").trim();
+        const lastName = String(data?.lastName ?? "").trim();
+        const fullName = String(data?.fullName ?? "").trim();
+        const mergedName = fullName || [firstName, lastName].filter(Boolean).join(" ").trim();
+
+        return {
+          id: d.id,
+          name: String(data?.name ?? ""),
+          firstName,
+          lastName,
+          fullName: mergedName,
+          password: String(data?.password ?? ""),
+          contact: normalizeNA(data?.contact),
+          civilStatus: normalizeNA(data?.civilStatus),
+          ministry: normalizeArray(data?.ministry),
+          coreGroup: normalizeArray(data?.coreGroup),
+          status: normalizeStatus(data?.status),
+          role: normalizeRole(data?.role),
+          idx: typeof data?.idx === "number" ? data.idx : undefined,
+        };
+      })
     );
   };
 
@@ -180,16 +227,20 @@ export default function ManageMembers() {
     const q = search.toLowerCase().trim();
 
     const filtered = [...items].filter((x) =>
-      `${x.name} ${x.fullName ?? ""} ${x.contact ?? ""} ${x.civilStatus ?? ""} ${
-        x.ministry?.join(" ") ?? ""
-      } ${x.coreGroup?.join(" ")} ${x.status ?? ""} ${x.idx ?? ""}`
+      `${x.name} ${x.firstName ?? ""} ${x.lastName ?? ""} ${x.fullName ?? ""} ${x.contact ?? ""} ${
+        x.civilStatus ?? ""
+      } ${x.ministry?.join(" ") ?? ""} ${x.coreGroup?.join(" ")} ${x.status ?? ""} ${x.role ?? ""} ${
+        x.idx ?? ""
+      }`
         .toLowerCase()
         .includes(q)
     );
 
     filtered.sort((a, b) => {
       if (sortField === "name") {
-        const left = (a.fullName || a.name).localeCompare(b.fullName || b.name);
+        const aDisplay = a.fullName || [a.firstName, a.lastName].filter(Boolean).join(" ") || a.name;
+        const bDisplay = b.fullName || [b.firstName, b.lastName].filter(Boolean).join(" ") || b.name;
+        const left = aDisplay.localeCompare(bDisplay);
         return sortDirection === "asc" ? left : -left;
       }
 
@@ -199,7 +250,9 @@ export default function ManageMembers() {
         return sortDirection === "asc" ? aIdx - bIdx : bIdx - aIdx;
       }
 
-      const left = (a.fullName || a.name).localeCompare(b.fullName || b.name);
+      const aDisplay = a.fullName || [a.firstName, a.lastName].filter(Boolean).join(" ") || a.name;
+      const bDisplay = b.fullName || [b.firstName, b.lastName].filter(Boolean).join(" ") || b.name;
+      const left = aDisplay.localeCompare(bDisplay);
       return sortDirection === "asc" ? left : -left;
     });
 
@@ -239,26 +292,46 @@ export default function ManageMembers() {
     setSelectedMinistries([]);
     setSelectedCoreGroups([]);
     setSelectedStatus("unregister");
+    setSelectedCivilStatus("NA");
+    setSelectedRole("member");
+    setShowPassword(false);
     setFormOpen(true);
   };
 
   const openEditMember = (item: Member) => {
+    const split =
+      item.firstName || item.lastName
+        ? {
+            firstName: item.firstName ?? "",
+            lastName: item.lastName ?? "",
+          }
+        : splitFullName(item.fullName || item.name);
+
     setEditingId(item.id);
     setForm({
       name: item.name ?? "",
-      fullName: item.fullName ?? "",
+      firstName: split.firstName,
+      lastName: split.lastName,
       password: item.password ?? "",
       contact: item.contact && item.contact !== "NA" ? item.contact : "",
-      civilStatus: item.civilStatus && item.civilStatus !== "NA" ? item.civilStatus : "",
     });
     setSelectedMinistries(item.ministry ?? []);
     setSelectedCoreGroups(item.coreGroup ?? []);
     setSelectedStatus(item.status ?? "unregister");
+    setSelectedCivilStatus(item.civilStatus && item.civilStatus !== "NA" ? item.civilStatus : "NA");
+    setSelectedRole(item.role === "admin" ? "admin" : "member");
+    setShowPassword(false);
     setFormOpen(true);
   };
 
   const openSelector = async (kind: ActiveSelector) => {
-    if (kind !== "status" && loadingOptions && optionsLoadPromiseRef.current) {
+    if (
+      kind !== "status" &&
+      kind !== "civilStatus" &&
+      kind !== "role" &&
+      loadingOptions &&
+      optionsLoadPromiseRef.current
+    ) {
       await optionsLoadPromiseRef.current;
     }
 
@@ -283,26 +356,40 @@ export default function ManageMembers() {
 
     if (kind === "status") {
       setSelectedStatus(value as MemberStatus);
+      return;
+    }
+
+    if (kind === "civilStatus") {
+      setSelectedCivilStatus(value);
+      return;
+    }
+
+    if (kind === "role") {
+      setSelectedRole(value as MemberRole);
     }
   };
 
   const save = async () => {
-    if (!form.name.trim() || !form.fullName.trim() || !form.password.trim()) {
-      return Alert.alert("Error", "Name, Full Name, and Password are required");
+    if (!form.name.trim() || !form.firstName.trim() || !form.lastName.trim() || !form.password.trim()) {
+      return Alert.alert("Error", "Name, First Name, Last Name, and Password are required");
     }
 
     setSaving(true);
     try {
+      const mergedFullName = `${form.firstName.trim()} ${form.lastName.trim()}`.trim();
+
       const data = {
         name: form.name.trim(),
-        fullName: form.fullName.trim(),
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        fullName: mergedFullName,
         password: form.password.trim(),
         contact: normalizeNA(form.contact),
-        civilStatus: normalizeNA(form.civilStatus),
+        civilStatus: normalizeNA(selectedCivilStatus),
         ministry: selectedMinistries,
         coreGroup: selectedCoreGroups,
         status: selectedStatus,
-        role: "member",
+        role: selectedRole,
       };
 
       if (editingId) {
@@ -317,6 +404,9 @@ export default function ManageMembers() {
       setSelectedMinistries([]);
       setSelectedCoreGroups([]);
       setSelectedStatus("unregister");
+      setSelectedCivilStatus("NA");
+      setSelectedRole("member");
+      setShowPassword(false);
       await load();
     } catch {
       Alert.alert("Error", "Save failed");
@@ -330,21 +420,33 @@ export default function ManageMembers() {
       ? ministryOptions
       : activeSelector === "coreGroup"
         ? coreGroupOptions
-        : statusOptions;
+        : activeSelector === "civilStatus"
+          ? civilStatusOptions
+          : activeSelector === "role"
+            ? roleOptions
+            : statusOptions;
 
   const activeTitle =
     activeSelector === "ministry"
       ? "Select Ministry"
       : activeSelector === "coreGroup"
         ? "Select Core Group"
-        : "Select Status";
+        : activeSelector === "civilStatus"
+          ? "Select Civil Status"
+          : activeSelector === "role"
+            ? "Select Role"
+            : "Select Status";
 
   const activeSelected =
     activeSelector === "ministry"
       ? selectedMinistries
       : activeSelector === "coreGroup"
         ? selectedCoreGroups
-        : [selectedStatus];
+        : activeSelector === "civilStatus"
+          ? [selectedCivilStatus]
+          : activeSelector === "role"
+            ? [selectedRole]
+            : [selectedStatus];
 
   return (
     <View className="flex-1 bg-slate-50">
@@ -358,6 +460,8 @@ export default function ManageMembers() {
             onChangeText={setSearch}
             placeholder="Search members"
             placeholderTextColor="#9CA3AF"
+            autoCapitalize="none"
+            autoCorrect={false}
             className="flex-1 text-[15px] text-slate-900"
           />
         </View>
@@ -376,9 +480,7 @@ export default function ManageMembers() {
           </Pressable>
 
           <Pressable
-            onPress={() =>
-              setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))
-            }
+            onPress={() => setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))}
             className="h-[46px] w-[46px] items-center justify-center rounded-[14px] bg-slate-200"
             style={({ pressed }) =>
               pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
@@ -396,7 +498,10 @@ export default function ManageMembers() {
           {list.map((item) => {
             const isOpen = openId === item.id;
             const dotColor = statusColor[item.status ?? "unregister"];
-            const displayName = item.fullName?.trim() || item.name;
+            const displayName =
+              item.fullName?.trim() ||
+              [item.firstName, item.lastName].filter(Boolean).join(" ").trim() ||
+              item.name;
 
             return (
               <View
@@ -415,10 +520,7 @@ export default function ManageMembers() {
                       <MaterialIcons name="person" size={24} color="#9CA3AF" />
                     </View>
 
-                    <View
-                      className="h-3 w-3 rounded-full"
-                      style={{ backgroundColor: dotColor }}
-                    />
+                    <View className="h-3 w-3 rounded-full" style={{ backgroundColor: dotColor }} />
 
                     <Text className="flex-1 text-base font-bold text-slate-900">
                       {displayName}
@@ -445,7 +547,7 @@ export default function ManageMembers() {
                           memberName: displayName,
                           id: item.id,
                           name: displayName,
-                          userRole: "admin",
+                          userRole: item.role ?? "member",
                         },
                       })
                     }
@@ -477,6 +579,8 @@ export default function ManageMembers() {
                 {isOpen ? (
                   <View className="gap-2.5 px-3.5 pb-3.5">
                     <DetailRow label="Name" value={item.name} />
+                    <DetailRow label="First Name" value={item.firstName} />
+                    <DetailRow label="Last Name" value={item.lastName} />
                     <DetailRow label="Full Name" value={item.fullName} />
                     <DetailRow label="Contact" value={item.contact} />
                     <DetailRow label="Civil Status" value={item.civilStatus} />
@@ -533,59 +637,122 @@ export default function ManageMembers() {
             onPress={() => {}}
           >
             <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
-            <Text className="mb-3 text-[22px] font-extrabold text-slate-900">
-              {editingId ? "Edit Member" : "Add Member"}
-            </Text>
+            <View className="mb-3 flex-row items-center justify-between gap-3">
+              <Text className="flex-1 text-[22px] font-extrabold text-slate-900">
+                {editingId ? "Edit Member" : "Add Member"}
+              </Text>
+
+              <Pressable
+                onPress={() => openSelector("role")}
+                className="flex-row items-center gap-2 rounded-[14px] border border-slate-200 bg-slate-50 px-3 py-2"
+                style={({ pressed }) =>
+                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                }
+              >
+                <Text className="text-[12px] font-extrabold uppercase tracking-[0.6px] text-slate-500">
+                  Role:
+                </Text>
+                <Text className="text-[15px] font-bold text-slate-900">
+                  {roleLabel[selectedRole]}
+                </Text>
+              </Pressable>
+            </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="gap-3 pb-2">
               <TextInput
                 value={form.name}
                 onChangeText={(value) => setForm((prev) => ({ ...prev, name: value }))}
-                placeholder="Name"
+                placeholder="Nickname"
+                autoCapitalize="words"
+                autoCorrect={false}
                 className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
               />
 
-              <TextInput
-                value={form.fullName}
-                onChangeText={(value) => setForm((prev) => ({ ...prev, fullName: value }))}
-                placeholder="Full Name"
-                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
-              />
+              <View className="flex-row gap-3">
+                <TextInput
+                  value={form.firstName}
+                  onChangeText={(value) => setForm((prev) => ({ ...prev, firstName: value }))}
+                  placeholder="First Name"
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  className="flex-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
+                />
 
-              <TextInput
-                value={form.password}
-                onChangeText={(value) => setForm((prev) => ({ ...prev, password: value }))}
-                placeholder="Password"
-                secureTextEntry
-                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
-              />
+                <TextInput
+                  value={form.lastName}
+                  onChangeText={(value) => setForm((prev) => ({ ...prev, lastName: value }))}
+                  placeholder="Last Name"
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  className="flex-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
+                />
+              </View>
+
+              <View className="flex-row items-center rounded-[14px] border border-slate-200 bg-white px-4">
+                <TextInput
+                  value={form.password}
+                  onChangeText={(value) => setForm((prev) => ({ ...prev, password: value }))}
+                  placeholder="Password"
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  className="flex-1 py-3 text-[15px] text-slate-900"
+                />
+                <Pressable
+                  onPress={() => setShowPassword((prev) => !prev)}
+                  hitSlop={10}
+                  className="pl-3"
+                >
+                  <MaterialIcons
+                    name={showPassword ? "visibility-off" : "visibility"}
+                    size={22}
+                    color="#6B7280"
+                  />
+                </Pressable>
+              </View>
 
               <TextInput
                 value={form.contact}
-                onChangeText={(value) => setForm((prev) => ({ ...prev, contact: value }))}
-                placeholder="Contact"
-                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
-              />
-
-              <TextInput
-                value={form.civilStatus}
-                onChangeText={(value) => setForm((prev) => ({ ...prev, civilStatus: value }))}
-                placeholder="Civil Status"
-                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
-              />
-
-              <Pressable
-                onPress={() => openSelector("status")}
-                className="gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
-                style={({ pressed }) =>
-                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                onChangeText={(value) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    contact: value.replace(/[^0-9]/g, ""),
+                  }))
                 }
-              >
-                <Text className="text-xs font-bold uppercase text-slate-500">Status</Text>
-                <Text className="text-[15px] font-bold text-slate-900">
-                  {statusLabel[selectedStatus]}
-                </Text>
-              </Pressable>
+                placeholder="Contact"
+                keyboardType="numeric"
+                autoCapitalize="none"
+                autoCorrect={false}
+                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
+              />
+
+              <View className="flex-row gap-3">
+                <Pressable
+                  onPress={() => openSelector("civilStatus")}
+                  className="flex-1 gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                  style={({ pressed }) =>
+                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                  }
+                >
+                  <Text className="text-xs font-bold uppercase text-slate-500">Civil Status</Text>
+                  <Text className="text-[15px] font-bold text-slate-900">
+                    {selectedCivilStatus}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => openSelector("status")}
+                  className="flex-1 gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                  style={({ pressed }) =>
+                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                  }
+                >
+                  <Text className="text-xs font-bold uppercase text-slate-500">Status</Text>
+                  <Text className="text-[15px] font-bold text-slate-900">
+                    {statusLabel[selectedStatus]}
+                  </Text>
+                </Pressable>
+              </View>
 
               <Pressable
                 onPress={() => openSelector("ministry")}
@@ -671,14 +838,25 @@ export default function ManageMembers() {
               ) : (
                 activeOptions.map((item) => {
                   const isStatus = activeSelector === "status";
+                  const isCivilStatus = activeSelector === "civilStatus";
+                  const isRole = activeSelector === "role";
                   const selected = isStatus
                     ? selectedStatus === item.id
-                    : activeSelected.includes(item.name);
+                    : isCivilStatus
+                      ? selectedCivilStatus === item.name
+                      : isRole
+                        ? selectedRole === item.id
+                        : activeSelected.includes(item.name);
 
                   return (
                     <Pressable
                       key={item.id}
-                      onPress={() => toggleSelected(isStatus ? item.id : item.name, activeSelector)}
+                      onPress={() =>
+                        toggleSelected(
+                          isStatus || isCivilStatus || isRole ? item.id : item.name,
+                          activeSelector
+                        )
+                      }
                       className={`min-h-[48px] flex-row items-center gap-3 rounded-[14px] px-4 ${
                         selected ? "bg-blue-50" : "bg-slate-50"
                       }`}
@@ -748,9 +926,7 @@ export default function ManageMembers() {
               }
             >
               <Text className="text-[15px] font-bold text-slate-900">A-Z</Text>
-              {sortField === "name" ? (
-                <MaterialIcons name="check" size={18} color="#2563EB" />
-              ) : null}
+              {sortField === "name" ? <MaterialIcons name="check" size={18} color="#2563EB" /> : null}
             </Pressable>
 
             <Pressable
@@ -766,9 +942,7 @@ export default function ManageMembers() {
               }
             >
               <Text className="text-[15px] font-bold text-slate-900">Idx</Text>
-              {sortField === "idx" ? (
-                <MaterialIcons name="check" size={18} color="#2563EB" />
-              ) : null}
+              {sortField === "idx" ? <MaterialIcons name="check" size={18} color="#2563EB" /> : null}
             </Pressable>
           </Pressable>
         </Pressable>
