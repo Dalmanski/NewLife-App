@@ -9,22 +9,21 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Alert,
-  Modal,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Alert, Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { TextInput as PaperTextInput } from "react-native-paper";
 import { db } from "../../lib/firebaseConfig";
 
 type MemberStatus = "unregister" | "pending" | "register";
 type MemberRole = "member" | "admin";
 type SortField = "name" | "idx";
 type SortDirection = "asc" | "desc";
-type ActiveSelector = "ministry" | "coreGroup" | "status" | "civilStatus" | "role" | null;
+type ActiveSelector =
+  | "ministry"
+  | "coreGroup"
+  | "status"
+  | "civilStatus"
+  | "role"
+  | null;
 
 type Member = {
   id: string;
@@ -278,13 +277,7 @@ export default function ManageMembers() {
   };
 
   const sortLabel =
-    sortField === "name"
-      ? sortDirection === "asc"
-        ? "A-Z"
-        : "Z-A"
-      : sortDirection === "asc"
-        ? "Idx ↑"
-        : "Idx ↓";
+    sortField === "name" ? (sortDirection === "asc" ? "A-Z" : "Z-A") : sortDirection === "asc" ? "Idx ↑" : "Idx ↓";
 
   const openAddMember = () => {
     setEditingId(null);
@@ -453,18 +446,14 @@ export default function ManageMembers() {
       <ScrollView contentContainerClassName="gap-3 px-5 pb-[110px] pt-5">
         <Text className="text-2xl font-extrabold text-slate-900">Manage Members</Text>
 
-        <View className="h-[50px] flex-row items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-4">
-          <MaterialIcons name="search" size={20} color="#6B7280" />
-          <TextInput
-            value={search}
-            onChangeText={setSearch}
-            placeholder="Search members"
-            placeholderTextColor="#9CA3AF"
-            autoCapitalize="none"
-            autoCorrect={false}
-            className="flex-1 text-[15px] text-slate-900"
-          />
-        </View>
+        <PaperField
+          label="Search members"
+          value={search}
+          onChangeText={setSearch}
+          icon="magnify"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
 
         <View className="flex-row items-center gap-2 self-start">
           <Pressable
@@ -522,9 +511,7 @@ export default function ManageMembers() {
 
                     <View className="h-3 w-3 rounded-full" style={{ backgroundColor: dotColor }} />
 
-                    <Text className="flex-1 text-base font-bold text-slate-900">
-                      {displayName}
-                    </Text>
+                    <Text className="flex-1 text-base font-bold text-slate-900">{displayName}</Text>
                   </Pressable>
 
                   <Pressable
@@ -649,69 +636,62 @@ export default function ManageMembers() {
                   pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
                 }
               >
+                <MaterialIcons name="admin-panel-settings" size={18} color="#6B7280" />
                 <Text className="text-[12px] font-extrabold uppercase tracking-[0.6px] text-slate-500">
                   Role:
                 </Text>
-                <Text className="text-[15px] font-bold text-slate-900">
-                  {roleLabel[selectedRole]}
-                </Text>
+                <Text className="text-[15px] font-bold text-slate-900">{roleLabel[selectedRole]}</Text>
               </Pressable>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="gap-3 pb-2">
-              <TextInput
+              <PaperField
+                label="Nickname"
                 value={form.name}
                 onChangeText={(value) => setForm((prev) => ({ ...prev, name: value }))}
-                placeholder="Nickname"
+                icon="account"
                 autoCapitalize="words"
                 autoCorrect={false}
-                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
               />
 
               <View className="flex-row gap-3">
-                <TextInput
-                  value={form.firstName}
-                  onChangeText={(value) => setForm((prev) => ({ ...prev, firstName: value }))}
-                  placeholder="First Name"
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                  className="flex-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
-                />
-
-                <TextInput
-                  value={form.lastName}
-                  onChangeText={(value) => setForm((prev) => ({ ...prev, lastName: value }))}
-                  placeholder="Last Name"
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                  className="flex-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
-                />
-              </View>
-
-              <View className="flex-row items-center rounded-[14px] border border-slate-200 bg-white px-4">
-                <TextInput
-                  value={form.password}
-                  onChangeText={(value) => setForm((prev) => ({ ...prev, password: value }))}
-                  placeholder="Password"
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  className="flex-1 py-3 text-[15px] text-slate-900"
-                />
-                <Pressable
-                  onPress={() => setShowPassword((prev) => !prev)}
-                  hitSlop={10}
-                  className="pl-3"
-                >
-                  <MaterialIcons
-                    name={showPassword ? "visibility-off" : "visibility"}
-                    size={22}
-                    color="#6B7280"
+                <View className="flex-1">
+                  <PaperField
+                    label="First Name"
+                    value={form.firstName}
+                    onChangeText={(value) => setForm((prev) => ({ ...prev, firstName: value }))}
+                    icon="account-outline"
+                    autoCapitalize="words"
+                    autoCorrect={false}
                   />
-                </Pressable>
+                </View>
+
+                <View className="flex-1">
+                  <PaperField
+                    label="Last Name"
+                    value={form.lastName}
+                    onChangeText={(value) => setForm((prev) => ({ ...prev, lastName: value }))}
+                    icon="account-outline"
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                  />
+                </View>
               </View>
 
-              <TextInput
+              <PaperField
+                label="Password"
+                value={form.password}
+                onChangeText={(value) => setForm((prev) => ({ ...prev, password: value }))}
+                icon="lock"
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                rightIcon={showPassword ? "eye-off" : "eye"}
+                onRightPress={() => setShowPassword((prev) => !prev)}
+              />
+
+              <PaperField
+                label="Contact"
                 value={form.contact}
                 onChangeText={(value) =>
                   setForm((prev) => ({
@@ -719,66 +699,41 @@ export default function ManageMembers() {
                     contact: value.replace(/[^0-9]/g, ""),
                   }))
                 }
-                placeholder="Contact"
-                keyboardType="numeric"
+                icon="phone"
+                keyboardType="phone-pad"
                 autoCapitalize="none"
                 autoCorrect={false}
-                className="rounded-[14px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
               />
 
               <View className="flex-row gap-3">
-                <Pressable
+                <SelectField
+                  label="Civil Status"
+                  value={selectedCivilStatus}
+                  icon="heart"
                   onPress={() => openSelector("civilStatus")}
-                  className="flex-1 gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
-                  style={({ pressed }) =>
-                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                  }
-                >
-                  <Text className="text-xs font-bold uppercase text-slate-500">Civil Status</Text>
-                  <Text className="text-[15px] font-bold text-slate-900">
-                    {selectedCivilStatus}
-                  </Text>
-                </Pressable>
+                />
 
-                <Pressable
+                <SelectField
+                  label="Status"
+                  value={statusLabel[selectedStatus]}
+                  icon="badge"
                   onPress={() => openSelector("status")}
-                  className="flex-1 gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
-                  style={({ pressed }) =>
-                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                  }
-                >
-                  <Text className="text-xs font-bold uppercase text-slate-500">Status</Text>
-                  <Text className="text-[15px] font-bold text-slate-900">
-                    {statusLabel[selectedStatus]}
-                  </Text>
-                </Pressable>
+                />
               </View>
 
-              <Pressable
+              <SelectField
+                label="Ministry"
+                value={selectedMinistries.length ? selectedMinistries.join(", ") : "NA"}
+                icon="groups"
                 onPress={() => openSelector("ministry")}
-                className="gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
-                style={({ pressed }) =>
-                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                }
-              >
-                <Text className="text-xs font-bold uppercase text-slate-500">Ministry</Text>
-                <Text className="text-[15px] font-bold text-slate-900">
-                  {selectedMinistries.length ? selectedMinistries.join(", ") : "NA"}
-                </Text>
-              </Pressable>
+              />
 
-              <Pressable
+              <SelectField
+                label="Core Group"
+                value={selectedCoreGroups.length ? selectedCoreGroups.join(", ") : "NA"}
+                icon="group-work"
                 onPress={() => openSelector("coreGroup")}
-                className="gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
-                style={({ pressed }) =>
-                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                }
-              >
-                <Text className="text-xs font-bold uppercase text-slate-500">Core Group</Text>
-                <Text className="text-[15px] font-bold text-slate-900">
-                  {selectedCoreGroups.length ? selectedCoreGroups.join(", ") : "NA"}
-                </Text>
-              </Pressable>
+              />
 
               <View className="flex-row justify-end gap-2.5 pt-1">
                 <Pressable
@@ -865,13 +820,9 @@ export default function ManageMembers() {
                       }
                     >
                       <View className="h-[22px] w-[22px] items-center justify-center rounded-md border border-slate-400 bg-white">
-                        {selected ? (
-                          <Text className="text-sm font-extrabold text-emerald-600">✓</Text>
-                        ) : null}
+                        {selected ? <Text className="text-sm font-extrabold text-emerald-600">✓</Text> : null}
                       </View>
-                      <Text className="flex-1 text-[15px] font-bold text-slate-900">
-                        {item.name}
-                      </Text>
+                      <Text className="flex-1 text-[15px] font-bold text-slate-900">{item.name}</Text>
                     </Pressable>
                   );
                 })
@@ -909,9 +860,7 @@ export default function ManageMembers() {
               elevation: 8,
             }}
           >
-            <Text className="px-4 pb-2 pt-4 text-[13px] font-extrabold text-slate-900">
-              Sort by
-            </Text>
+            <Text className="px-4 pb-2 pt-4 text-[13px] font-extrabold text-slate-900">Sort by</Text>
 
             <Pressable
               onPress={() => {
@@ -948,6 +897,104 @@ export default function ManageMembers() {
         </Pressable>
       </Modal>
     </View>
+  );
+}
+
+function PaperField({
+  label,
+  value,
+  onChangeText,
+  icon,
+  rightIcon,
+  onRightPress,
+  secureTextEntry,
+  keyboardType,
+  autoCapitalize,
+  autoCorrect,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  icon: string;
+  rightIcon?: string;
+  onRightPress?: () => void;
+  secureTextEntry?: boolean;
+  keyboardType?: React.ComponentProps<typeof PaperTextInput>["keyboardType"];
+  autoCapitalize?: React.ComponentProps<typeof PaperTextInput>["autoCapitalize"];
+  autoCorrect?: boolean;
+}) {
+  return (
+    <PaperTextInput
+      mode="outlined"
+      label={label}
+      value={value}
+      onChangeText={onChangeText}
+      left={<PaperTextInput.Icon icon={icon} />}
+      right={
+        rightIcon
+          ? (props) => (
+              <PaperTextInput.Icon
+                {...props}
+                icon={rightIcon}
+                onPress={onRightPress}
+                forceTextInputFocus={false}
+              />
+            )
+          : undefined
+      }
+      secureTextEntry={secureTextEntry}
+      keyboardType={keyboardType}
+      autoCapitalize={autoCapitalize}
+      autoCorrect={autoCorrect}
+      dense
+      style={{
+        backgroundColor: "#FFFFFF",
+      }}
+      outlineStyle={{
+        borderRadius: 14,
+        borderColor: "#E2E8F0",
+      }}
+      contentStyle={{
+        paddingVertical: 6,
+      }}
+      theme={{
+        roundness: 14,
+        colors: {
+          primary: "#2563EB",
+        },
+      }}
+    />
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  icon,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  icon: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      className="flex-1 gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+      style={({ pressed }) =>
+        pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+      }
+    >
+      <View className="mb-1 flex-row items-center gap-2">
+        <MaterialIcons name={icon as any} size={18} color="#6B7280" />
+        <Text className="text-xs font-bold uppercase text-slate-500">{label}</Text>
+      </View>
+      <View className="flex-row items-center justify-between gap-2">
+        <Text className="flex-1 text-[15px] font-bold text-slate-900">{value}</Text>
+        <MaterialIcons name="keyboard-arrow-down" size={20} color="#6B7280" />
+      </View>
+    </Pressable>
   );
 }
 

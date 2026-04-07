@@ -14,10 +14,10 @@ import {
   Platform,
   Pressable,
   StatusBar as RNStatusBar,
-  SafeAreaView,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "../global.css";
 
@@ -76,11 +76,7 @@ export default function RootLayout() {
             <View
               className="flex-row items-center justify-between bg-white px-4 border-b border-gray-200 z-50"
               style={{
-                height:
-                  60 +
-                  (Platform.OS === "android" ? RNStatusBar.currentHeight ?? 0 : 0),
-                paddingTop:
-                  Platform.OS === "android" ? RNStatusBar.currentHeight ?? 0 : 0,
+                height: 60,
                 elevation: 12,
               }}
             >
