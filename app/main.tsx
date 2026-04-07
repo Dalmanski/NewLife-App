@@ -2,8 +2,16 @@ import { MaterialIcons } from "@expo/vector-icons";
 import * as NavigationBar from "expo-navigation-bar";
 import { useLocalSearchParams } from "expo-router";
 import { doc, getDoc } from "firebase/firestore";
-import { useContext, useEffect, useMemo, useState } from "react";
-import { Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Animated,
+  Easing,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 import { db } from "../lib/firebaseConfig";
 import { HeaderMenuContext } from "./_layout";
 import ManageGroup from "./admin/manage-group";
@@ -14,6 +22,8 @@ import SpecialMeeting from "./member/special-meeting";
 import Volunteers from "./member/volunteers";
 import Tasks from "./task-board";
 
+const SIDEBAR_WIDTH = 290;
+
 export default function Main() {
   const { id } = useLocalSearchParams();
   const { setMenuAction } = useContext(HeaderMenuContext);
@@ -21,7 +31,11 @@ export default function Main() {
   const [role, setRole] = useState("");
   const [memberName, setMemberName] = useState("Member");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarMounted, setSidebarMounted] = useState(false);
   const [activePath, setActivePath] = useState("");
+
+  const sidebarAnim = useRef(new Animated.Value(0)).current;
+  const overlayAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const load = async () => {
@@ -40,7 +54,7 @@ export default function Main() {
     const showNav = async () => {
       if (Platform.OS === "android") {
         await NavigationBar.setVisibilityAsync("visible");
-        await NavigationBar.setBackgroundColorAsync("#ffffff");
+        // Skip setBackgroundColorAsync as it's not supported with edge-to-edge enabled
       }
     };
     showNav();
@@ -48,6 +62,7 @@ export default function Main() {
 
   useEffect(() => {
     setMenuAction(() => () => {
+      setSidebarMounted(true);
       setSidebarOpen((prev) => !prev);
     });
 
@@ -56,35 +71,101 @@ export default function Main() {
     };
   }, [setMenuAction]);
 
+  useEffect(() => {
+    if (sidebarOpen) {
+      setSidebarMounted(true);
+      Animated.parallel([
+        Animated.timing(sidebarAnim, {
+          toValue: 1,
+          duration: 240,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(overlayAnim, {
+          toValue: 1,
+          duration: 240,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (sidebarMounted) {
+      Animated.parallel([
+        Animated.timing(sidebarAnim, {
+          toValue: 0,
+          duration: 210,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(overlayAnim, {
+          toValue: 0,
+          duration: 210,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished) setSidebarMounted(false);
+      });
+    }
+  }, [sidebarOpen, sidebarMounted, sidebarAnim, overlayAnim]);
+
   const items = useMemo(() => {
     const adminItems = [
       {
         title: "Manage Group",
         path: "/admin/manage-group",
         component: ManageGroup,
+        icon: "groups",
       },
-      { title: "Calendar", path: "/calendar", component: Calendar },
-      { title: "Event", path: "/event", component: EventScreen },
+      {
+        title: "Calendar",
+        path: "/calendar",
+        component: Calendar,
+        icon: "calendar-month",
+      },
+      {
+        title: "Event",
+        path: "/event",
+        component: EventScreen,
+        icon: "event",
+      },
       {
         title: "Members",
         path: "/admin/manage-members",
         component: ManageMembers,
+        icon: "person",
       },
     ];
 
     const memberItems = [
-      { title: "Tasks", path: "/task-board", component: Tasks },
-      { title: "Calendar", path: "/calendar", component: Calendar },
-      { title: "Event", path: "/event", component: EventScreen },
+      {
+        title: "Tasks",
+        path: "/task-board",
+        component: Tasks,
+        icon: "task-alt",
+      },
+      {
+        title: "Calendar",
+        path: "/calendar",
+        component: Calendar,
+        icon: "calendar-month",
+      },
+      {
+        title: "Event",
+        path: "/event",
+        component: EventScreen,
+        icon: "event",
+      },
       {
         title: "Volunteer",
         path: "/member/volunteers",
         component: Volunteers,
+        icon: "volunteer-activism",
       },
       {
         title: "Special Meeting",
         path: "/member/special-meeting",
         component: SpecialMeeting,
+        icon: "groups-2",
       },
     ];
 
@@ -92,7 +173,9 @@ export default function Main() {
   }, [role]);
 
   useEffect(() => {
-    if (!activePath && items.length > 0) {
+    if (!items.length) return;
+    const stillValid = items.some((item) => item.path === activePath);
+    if (!activePath || !stillValid) {
       setActivePath(items[0].path);
     }
   }, [items, activePath]);
@@ -106,28 +189,49 @@ export default function Main() {
     setSidebarOpen(false);
   };
 
+  const sidebarTranslateX = sidebarAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-SIDEBAR_WIDTH, 0],
+  });
+
+  const overlayOpacity = overlayAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+
   return (
     <View className="flex-1 bg-gray-100">
       <View className="flex-1">
-        {sidebarOpen ? (
+        {sidebarMounted ? (
           <Pressable
-            className="absolute inset-0 z-10 bg-gray-900/20"
+            className="absolute inset-0 z-10"
             onPress={() => setSidebarOpen(false)}
-          />
+          >
+            <Animated.View
+              style={{ opacity: overlayOpacity }}
+              className="flex-1 bg-black/20"
+            />
+          </Pressable>
         ) : null}
 
-        {sidebarOpen ? (
-          <View className="absolute bottom-0 left-0 top-0 z-20 w-[280px] border-r border-gray-200 bg-white px-3 pt-4 shadow-2xl">
-            <View className="mb-4 border-b border-gray-200 pb-3">
+        {sidebarMounted ? (
+          <Animated.View
+            style={{
+              width: SIDEBAR_WIDTH,
+              transform: [{ translateX: sidebarTranslateX }],
+            }}
+            className="absolute bottom-0 left-0 top-0 z-20 border-r border-gray-200 bg-white px-4 pt-5 shadow-2xl"
+          >
+            <View className="mb-4 border-b border-gray-200 pb-4">
               <View className="flex-row items-center gap-3">
-                <View className="h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-gray-100">
+                <View className="h-11 w-11 items-center justify-center rounded-full bg-gray-100">
                   <MaterialIcons name="person" size={24} color="#6B7280" />
                 </View>
                 <View className="flex-1">
                   <Text className="text-[18px] font-extrabold text-gray-900">
                     {memberName}
                   </Text>
-                  <Text className="mt-1 text-[13px] font-semibold text-gray-500">
+                  <Text className="mt-1 text-[12px] font-semibold uppercase tracking-wider text-gray-500">
                     {role === "admin" ? "Admin" : "Member"}
                   </Text>
                 </View>
@@ -136,26 +240,41 @@ export default function Main() {
 
             <ScrollView
               showsVerticalScrollIndicator={false}
-              contentContainerClassName="pb-5"
+              contentContainerClassName="pb-6"
             >
-              {items.map((item) => {
-                const isActive = activeItem?.path === item.path;
-                return (
-                  <Pressable
-                    key={item.path}
-                    onPress={() => selectItem(item)}
-                    className={`mb-1 rounded-xl px-3 py-3 ${
-                      isActive ? "bg-blue-100" : ""
-                    }`}
-                  >
-                    <Text className="text-[15px] font-bold text-gray-900">
-                      {item.title}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+              <View className="mb-3">
+                {items.map((item) => {
+                  const isActive = activeItem?.path === item.path;
+
+                  return (
+                    <Pressable
+                      key={item.path}
+                      onPress={() => selectItem(item)}
+                      className={`mb-1 flex-row items-center border-l-4 px-3 py-3 ${
+                        isActive
+                          ? "border-blue-600 bg-gray-100"
+                          : "border-transparent bg-transparent"
+                      }`}
+                    >
+                      <MaterialIcons
+                        name={item.icon}
+                        size={20}
+                        color={isActive ? "#2563EB" : "#6B7280"}
+                      />
+
+                      <Text
+                        className={`ml-3 flex-1 text-[15px] font-semibold ${
+                          isActive ? "text-gray-900" : "text-gray-600"
+                        }`}
+                      >
+                        {item.title}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </ScrollView>
-          </View>
+          </Animated.View>
         ) : null}
 
         <View className="flex-1 items-stretch justify-stretch">

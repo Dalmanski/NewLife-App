@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { db } from "../lib/firebaseConfig";
 
 type Task = {
@@ -36,82 +36,16 @@ type CalendarProps = {
   memberName?: string;
 };
 
-type HolidayKind = "regular" | "special";
+type HolidayKind = "national" | "local" | "religious" | "observance";
 
 type Holiday = {
   name: string;
   kind: HolidayKind;
+  types: string[];
 };
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const iso = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
-
-const isoFromDate = (date: Date) => iso(date.getFullYear(), date.getMonth(), date.getDate());
-
-const shiftDate = (date: Date, days: number) => {
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  d.setDate(d.getDate() + days);
-  return d;
-};
-
-const getEasterSunday = (year: number) => {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31) - 1;
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(year, month, day);
-};
-
-const getLastMondayOfMonth = (year: number, month: number) => {
-  const d = new Date(year, month + 1, 0);
-  while (d.getDay() !== 1) d.setDate(d.getDate() - 1);
-  return d;
-};
-
-const getOfficialHolidays = (year: number): Record<string, Holiday> => {
-  const holidays: Record<string, Holiday> = {};
-  const add = (date: string, name: string, kind: HolidayKind = "regular") => {
-    holidays[date] = { name, kind };
-  };
-
-  add(`${year}-01-01`, "New Year");
-  add(`${year}-04-09`, "Araw ng Kagitingan");
-  add(`${year}-05-01`, "Labor Day");
-  add(`${year}-06-12`, "Independence Day");
-  add(isoFromDate(getLastMondayOfMonth(year, 7)), "National Heroes Day");
-  add(`${year}-11-30`, "Bonifacio Day");
-  add(`${year}-12-25`, "Christmas Day");
-  add(`${year}-12-30`, "Rizal Day");
-
-  add(`${year}-08-21`, "Ninoy Aquino Day", "special");
-  add(`${year}-11-01`, "All Saints Day", "special");
-  add(`${year}-11-02`, "All Souls Day", "special");
-  add(`${year}-12-08`, "Immaculate Conception", "special");
-  add(`${year}-12-24`, "Christmas Eve", "special");
-  add(`${year}-12-31`, "Last Day of Year", "special");
-
-  const easter = getEasterSunday(year);
-  add(isoFromDate(shiftDate(easter, -3)), "Maundy Thursday");
-  add(isoFromDate(shiftDate(easter, -2)), "Good Friday");
-  add(isoFromDate(shiftDate(easter, 1)), "Black Saturday", "special");
-
-  if (year === 2026) {
-    add(`${year}-02-17`, "Chinese New Year", "special");
-    add(`${year}-03-20`, "Eid'l Fitr");
-  }
-
-  return holidays;
-};
 
 function toDateValue(value: any) {
   if (!value) return new Date();
@@ -139,12 +73,76 @@ function formatEventDate(value: any) {
   });
 }
 
+function normalizeHolidayKind(types: string[]): HolidayKind {
+  const lower = types.map((t) => String(t).toLowerCase());
+
+  if (lower.some((t) => t.includes("national"))) return "national";
+  if (lower.some((t) => t.includes("local"))) return "local";
+  if (lower.some((t) => t.includes("religious"))) return "religious";
+  return "observance";
+}
+
+function capitalizeFirst(value: string) {
+  if (!value) return "";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+async function fetchCalendarificHolidays(year: number) {
+  const apiKey = process.env.EXPO_PUBLIC_CALENDARIFIC_API_KEY;
+  const country = process.env.EXPO_PUBLIC_CALENDARIFIC_COUNTRY || "PH";
+
+  if (!apiKey) {
+    throw new Error("Missing EXPO_PUBLIC_CALENDARIFIC_API_KEY in .env");
+  }
+
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    country,
+    year: String(year),
+  });
+
+  const res = await fetch(`https://calendarific.com/api/v2/holidays?${params.toString()}`);
+  const json = await res.json();
+
+  if (!res.ok) {
+    throw new Error(json?.meta?.error_type || `Calendarific request failed (${res.status})`);
+  }
+
+  if (json?.meta?.code !== 200) {
+    throw new Error(json?.meta?.error_type || "Calendarific returned an error");
+  }
+
+  const holidays: Record<string, Holiday> = {};
+  const rows = Array.isArray(json?.response?.holidays) ? json.response.holidays : [];
+
+  rows.forEach((h: any) => {
+    const date = typeof h?.date?.iso === "string" ? h.date.iso.slice(0, 10) : "";
+    if (!date || !h?.name) return;
+
+    const types: string[] = Array.isArray(h?.type) ? h.type.map((t: any) => String(t)) : [];
+    const kind = normalizeHolidayKind(types);
+
+    if (!holidays[date]) {
+      holidays[date] = {
+        name: String(h.name),
+        kind,
+        types,
+      };
+    }
+  });
+
+  return holidays;
+}
+
 export default function Calendar({ userId, userRole, memberName }: CalendarProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [holidayMap, setHolidayMap] = useState<Record<string, Holiday>>({});
+  const [holidayLoading, setHolidayLoading] = useState(false);
+  const [holidayError, setHolidayError] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -175,6 +173,35 @@ export default function Calendar({ userId, userRole, memberName }: CalendarProps
 
     load();
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const loadHolidays = async () => {
+      setHolidayLoading(true);
+      setHolidayError(null);
+
+      try {
+        const data = await fetchCalendarificHolidays(year);
+        if (!controller.signal.aborted) {
+          setHolidayMap(data);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setHolidayMap({});
+          setHolidayError(error instanceof Error ? error.message : "Failed to load holidays");
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setHolidayLoading(false);
+        }
+      }
+    };
+
+    loadHolidays();
+
+    return () => controller.abort();
+  }, [year]);
 
   const visibleTasks = useMemo(() => {
     if (userRole === "admin") return tasks;
@@ -219,16 +246,18 @@ export default function Calendar({ userId, userRole, memberName }: CalendarProps
     return m;
   }, [events]);
 
-  const holidays = useMemo(() => getOfficialHolidays(year), [year]);
+  const holidays = useMemo(() => holidayMap, [holidayMap]);
 
   const days = useMemo(() => {
     const first = new Date(year, month, 1);
     const start = first.getDay();
     const total = new Date(year, month + 1, 0).getDate();
     const cells: Array<number | null> = [];
+
     for (let i = 0; i < start; i++) cells.push(null);
     for (let d = 1; d <= total; d++) cells.push(d);
     while (cells.length % 7 !== 0) cells.push(null);
+
     return cells;
   }, [year, month]);
 
@@ -250,7 +279,13 @@ export default function Calendar({ userId, userRole, memberName }: CalendarProps
     : "";
 
   const title = userRole === "admin" ? "Calendar" : `${memberName || "Member"}'s Calendar`;
-  const todayIso = iso(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+  const today = new Date();
+  const todayIso = iso(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayShort = today.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 
   const goPrevMonth = () => {
     if (month === 0) {
@@ -280,13 +315,62 @@ export default function Calendar({ userId, userRole, memberName }: CalendarProps
     return task.status ? task.status : "";
   };
 
+  const holidayColor = (kind?: HolidayKind) => {
+    if (kind === "national") return "bg-red-50";
+    if (kind === "local") return "bg-yellow-50";
+    if (kind === "religious") return "bg-violet-50";
+    if (kind === "observance") return "bg-blue-50";
+    return "bg-white";
+  };
+
+  const holidayBadgeColor = (kind?: HolidayKind) => {
+    if (kind === "national") return "bg-red-100/80";
+    if (kind === "local") return "bg-yellow-100/80";
+    if (kind === "religious") return "bg-violet-100/80";
+    if (kind === "observance") return "bg-blue-100/80";
+    return "bg-slate-100";
+  };
+
+  const holidayPanelColor = (kind?: HolidayKind) => {
+    if (kind === "national") return "border-red-200 bg-red-50";
+    if (kind === "local") return "border-yellow-200 bg-yellow-50";
+    if (kind === "religious") return "border-violet-200 bg-violet-50";
+    if (kind === "observance") return "border-blue-200 bg-blue-50";
+    return "border-slate-200 bg-slate-50";
+  };
+
+  const holidayTextColor = (kind?: HolidayKind) => {
+    if (kind === "national") return "text-red-700";
+    if (kind === "local") return "text-yellow-700";
+    if (kind === "religious") return "text-violet-700";
+    if (kind === "observance") return "text-blue-700";
+    return "text-slate-700";
+  };
+
   return (
     <View className="flex-1 bg-slate-50">
       <View className="border-b border-slate-200 bg-white px-4 pb-3 pt-4">
-        <Text className="text-3xl font-extrabold text-slate-900">{title}</Text>
-        <Text className="mt-1 text-sm text-slate-500">
-          Tap any date to view tasks, events, and official holidays
-        </Text>
+        <View className="flex-row items-start justify-between gap-3">
+          <View className="flex-1">
+            <Text className="text-3xl font-extrabold text-slate-900">{title}</Text>
+            <Text className="mt-1 text-sm text-slate-500">
+              Tap any date to view tasks, events, and holidays
+            </Text>
+          </View>
+
+          <View className="rounded-full bg-slate-100 px-3 py-1.5">
+            <Text className="text-xs font-bold text-slate-700">{todayShort}</Text>
+          </View>
+        </View>
+
+        {holidayLoading ? (
+          <View className="mt-2 flex-row items-center gap-2">
+            <ActivityIndicator size="small" />
+            <Text className="text-xs text-slate-500">Loading holidays from Calendarific...</Text>
+          </View>
+        ) : holidayError ? (
+          <Text className="mt-2 text-xs text-rose-600">{holidayError}</Text>
+        ) : null}
       </View>
 
       <View className="flex-row items-center justify-between border-b border-slate-200 bg-white px-3 py-2">
@@ -345,11 +429,9 @@ export default function Calendar({ userId, userRole, memberName }: CalendarProps
                       isSelected
                         ? "bg-blue-50"
                         : isToday
-                          ? "bg-sky-50"
+                          ? `${holiday ? holidayColor(holiday.kind) : "bg-sky-50"} border-2 border-blue-500`
                           : holiday
-                            ? holiday.kind === "regular"
-                              ? "bg-amber-50"
-                              : "bg-rose-50"
+                            ? holidayColor(holiday.kind)
                             : hasEvent
                               ? "bg-indigo-50"
                               : "bg-white"
@@ -373,12 +455,11 @@ export default function Calendar({ userId, userRole, memberName }: CalendarProps
 
                     <View className="mt-1.5">
                       {holiday ? (
-                        <View
-                          className={`mb-1 rounded-md px-1.5 py-1 ${
-                            holiday.kind === "regular" ? "bg-amber-100/70" : "bg-rose-100/70"
-                          }`}
-                        >
-                          <Text numberOfLines={2} className="text-[10px] font-bold leading-3 text-slate-900">
+                        <View className={`mb-1 rounded-md px-1.5 py-1 ${holidayBadgeColor(holiday.kind)}`}>
+                          <Text
+                            numberOfLines={2}
+                            className={`text-[10px] font-bold leading-3 ${holidayTextColor(holiday.kind)}`}
+                          >
                             {holiday.name}
                           </Text>
                         </View>
@@ -426,7 +507,9 @@ export default function Calendar({ userId, userRole, memberName }: CalendarProps
                 <Text className="text-lg font-extrabold text-slate-900">{selectedLabel}</Text>
                 <Text className="mt-1 text-sm text-slate-500">
                   {selectedTasks.length} task{selectedTasks.length === 1 ? "" : "s"} scheduled
-                  {selectedEvents.length > 0 ? ` • ${selectedEvents.length} event${selectedEvents.length === 1 ? "" : "s"}` : ""}
+                  {selectedEvents.length > 0
+                    ? ` • ${selectedEvents.length} event${selectedEvents.length === 1 ? "" : "s"}`
+                    : ""}
                   {selectedHoliday ? ` • ${selectedHoliday.name}` : ""}
                 </Text>
               </View>
@@ -441,14 +524,13 @@ export default function Calendar({ userId, userRole, memberName }: CalendarProps
 
             <ScrollView className="mt-4" showsVerticalScrollIndicator={false}>
               {selectedHoliday ? (
-                <View
-                  className={`mb-3 border p-3 ${
-                    selectedHoliday.kind === "regular"
-                      ? "border-amber-200 bg-amber-50"
-                      : "border-rose-200 bg-rose-50"
-                  }`}
-                >
-                  <Text className="text-[15px] font-extrabold text-slate-900">{selectedHoliday.name}</Text>
+                <View className={`mb-3 border p-3 ${holidayPanelColor(selectedHoliday.kind)}`}>
+                  <Text className={`text-[15px] font-extrabold ${holidayTextColor(selectedHoliday.kind)}`}>
+                    {selectedHoliday.name}
+                  </Text>
+                  <Text className={`mt-1 text-[12px] font-semibold ${holidayTextColor(selectedHoliday.kind)}`}>
+                    {capitalizeFirst(selectedHoliday.kind)} Holiday
+                  </Text>
                 </View>
               ) : null}
 
