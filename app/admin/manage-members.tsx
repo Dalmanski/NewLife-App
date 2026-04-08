@@ -9,7 +9,17 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  Alert,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { db } from "../../lib/firebaseConfig";
 
@@ -39,6 +49,8 @@ type Member = {
   status: MemberStatus;
   role?: MemberRole;
   idx?: number;
+  startedAt?: number | null;
+  statusChangedAt?: number | null;
 };
 
 type OptionItem = {
@@ -68,6 +80,33 @@ const normalizeNA = (value: unknown) => {
   const text = String(value ?? "").trim();
   if (!text || text.toLowerCase() === "na") return "NA";
   return text;
+};
+
+const normalizeTimestamp = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+
+    const dateParsed = Date.parse(value);
+    if (!Number.isNaN(dateParsed)) return dateParsed;
+  }
+
+  if (value && typeof value === "object") {
+    const obj = value as {
+      seconds?: number;
+      nanoseconds?: number;
+      toMillis?: () => number;
+    };
+
+    if (typeof obj.toMillis === "function") return obj.toMillis();
+    if (typeof obj.seconds === "number") {
+      return obj.seconds * 1000 + Math.floor((obj.nanoseconds ?? 0) / 1_000_000);
+    }
+  }
+
+  return null;
 };
 
 const splitFullName = (value: unknown) => {
@@ -126,9 +165,18 @@ const civilStatusOptions: OptionItem[] = [
   { id: "NA", name: "NA" },
 ];
 
+type ActionMenuState = {
+  visible: boolean;
+  item: Member | null;
+  top: number;
+  left: number;
+};
+
 export default function ManageMembers() {
   const router = useRouter();
+  const window = useWindowDimensions();
   const optionsLoadPromiseRef = useRef<Promise<void> | null>(null);
+  const actionButtonRefs = useRef<Record<string, View | null>>({});
 
   const [items, setItems] = useState<Member[]>([]);
   const [search, setSearch] = useState("");
@@ -143,7 +191,9 @@ export default function ManageMembers() {
   const [selectedStatus, setSelectedStatus] = useState<MemberStatus>("unregister");
   const [selectedCivilStatus, setSelectedCivilStatus] = useState<string>("NA");
   const [selectedRole, setSelectedRole] = useState<MemberRole>("member");
+  const [selectedStartedAt, setSelectedStartedAt] = useState<number>(Date.now());
   const [showPassword, setShowPassword] = useState(false);
+  const [originalStatus, setOriginalStatus] = useState<MemberStatus>("unregister");
 
   const [ministryOptions, setMinistryOptions] = useState<OptionItem[]>([]);
   const [coreGroupOptions, setCoreGroupOptions] = useState<OptionItem[]>([]);
@@ -154,6 +204,15 @@ export default function ManageMembers() {
 
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [activeSelector, setActiveSelector] = useState<ActiveSelector>(null);
+
+  const [actionMenu, setActionMenu] = useState<ActionMenuState>({
+    visible: false,
+    item: null,
+    top: 0,
+    left: 0,
+  });
+
+  const [showStartedDatePicker, setShowStartedDatePicker] = useState(false);
 
   const load = async () => {
     const snap = await getDocs(collection(db, "users"));
@@ -179,6 +238,8 @@ export default function ManageMembers() {
           status: normalizeStatus(data?.status),
           role: normalizeRole(data?.role),
           idx: typeof data?.idx === "number" ? data.idx : undefined,
+          startedAt: normalizeTimestamp(data?.startedAt),
+          statusChangedAt: normalizeTimestamp(data?.statusChangedAt),
         };
       })
     );
@@ -230,7 +291,7 @@ export default function ManageMembers() {
         x.civilStatus ?? ""
       } ${x.ministry?.join(" ") ?? ""} ${x.coreGroup?.join(" ")} ${x.status ?? ""} ${x.role ?? ""} ${
         x.idx ?? ""
-      }`
+      } ${x.startedAt ?? ""} ${x.statusChangedAt ?? ""}`
         .toLowerCase()
         .includes(q)
     );
@@ -287,7 +348,10 @@ export default function ManageMembers() {
     setSelectedStatus("unregister");
     setSelectedCivilStatus("NA");
     setSelectedRole("member");
+    setSelectedStartedAt(Date.now());
+    setOriginalStatus("unregister");
     setShowPassword(false);
+    setShowStartedDatePicker(false);
     setFormOpen(true);
   };
 
@@ -311,10 +375,70 @@ export default function ManageMembers() {
     setSelectedMinistries(item.ministry ?? []);
     setSelectedCoreGroups(item.coreGroup ?? []);
     setSelectedStatus(item.status ?? "unregister");
+    setOriginalStatus(item.status ?? "unregister");
     setSelectedCivilStatus(item.civilStatus && item.civilStatus !== "NA" ? item.civilStatus : "NA");
     setSelectedRole(item.role === "admin" ? "admin" : "member");
+    setSelectedStartedAt(typeof item.startedAt === "number" ? item.startedAt : Date.now());
     setShowPassword(false);
+    setShowStartedDatePicker(false);
     setFormOpen(true);
+  };
+
+  const openTask = (item: Member) => {
+    const displayName =
+      item.fullName?.trim() || [item.firstName, item.lastName].filter(Boolean).join(" ").trim() || item.name;
+
+    router.push({
+      pathname: "/task-board",
+      params: {
+        memberId: item.id,
+        memberName: displayName,
+        id: item.id,
+        name: displayName,
+        userRole: item.role ?? "member",
+      },
+    });
+  };
+
+  const closeActionMenu = () => {
+    setActionMenu({
+      visible: false,
+      item: null,
+      top: 0,
+      left: 0,
+    });
+  };
+
+  const openActionMenu = (item: Member, id: string) => {
+    const node = actionButtonRefs.current[id];
+
+    if (node && typeof node.measureInWindow === "function") {
+      node.measureInWindow((x, y, width, height) => {
+        const menuWidth = 176;
+        const menuHeight = 156;
+        const gap = 8;
+
+        const left = Math.min(Math.max(8, x + width - menuWidth), Math.max(8, window.width - menuWidth - 8));
+        const belowTop = y + height + gap;
+        const aboveTop = y - menuHeight - gap;
+        const top = belowTop + menuHeight <= window.height - 8 ? belowTop : Math.max(8, aboveTop);
+
+        setActionMenu({
+          visible: true,
+          item,
+          top,
+          left,
+        });
+      });
+      return;
+    }
+
+    setActionMenu({
+      visible: true,
+      item,
+      top: Math.max(8, window.height / 2 - 78),
+      left: Math.max(8, window.width - 184),
+    });
   };
 
   const openSelector = async (kind: ActiveSelector) => {
@@ -362,6 +486,20 @@ export default function ManageMembers() {
     }
   };
 
+  const openStartedDatePicker = () => {
+    setShowStartedDatePicker((prev) => !prev);
+  };
+
+  const handleStartedDateChange = (_event: any, date?: Date) => {
+    if (date) {
+      setSelectedStartedAt(date.getTime());
+    }
+
+    if (Platform.OS === "android") {
+      setShowStartedDatePicker(false);
+    }
+  };
+
   const save = async () => {
     if (!form.name.trim() || !form.firstName.trim() || !form.lastName.trim() || !form.password.trim()) {
       return Alert.alert("Error", "Name, First Name, Last Name, and Password are required");
@@ -370,6 +508,11 @@ export default function ManageMembers() {
     setSaving(true);
     try {
       const mergedFullName = `${form.firstName.trim()} ${form.lastName.trim()}`.trim();
+      const currentItem = editingId ? items.find((x) => x.id === editingId) : null;
+      const statusChangedAt =
+        editingId && selectedStatus === originalStatus
+          ? currentItem?.statusChangedAt ?? null
+          : Date.now();
 
       const data = {
         name: form.name.trim(),
@@ -383,6 +526,8 @@ export default function ManageMembers() {
         coreGroup: selectedCoreGroups,
         status: selectedStatus,
         role: selectedRole,
+        startedAt: selectedStartedAt,
+        statusChangedAt,
       };
 
       if (editingId) {
@@ -399,7 +544,10 @@ export default function ManageMembers() {
       setSelectedStatus("unregister");
       setSelectedCivilStatus("NA");
       setSelectedRole("member");
+      setSelectedStartedAt(Date.now());
+      setOriginalStatus("unregister");
       setShowPassword(false);
+      setShowStartedDatePicker(false);
       await load();
     } catch {
       Alert.alert("Error", "Save failed");
@@ -514,38 +662,23 @@ export default function ManageMembers() {
                     <Text className="flex-1 text-base font-bold text-slate-900">{displayName}</Text>
                   </Pressable>
 
-                  <Pressable
-                    onPress={() => openEditMember(item)}
-                    hitSlop={10}
-                    className="items-center justify-center px-1"
-                    style={({ pressed }) =>
-                      pressed ? { opacity: 0.6, transform: [{ scale: 0.96 }] } : undefined
-                    }
+                  <View
+                    ref={(node) => {
+                      actionButtonRefs.current[item.id] = node;
+                    }}
+                    collapsable={false}
                   >
-                    <MaterialIcons name="edit" size={20} color="#2563EB" />
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() =>
-                      router.push({
-                        pathname: "/task-board",
-                        params: {
-                          memberId: item.id,
-                          memberName: displayName,
-                          id: item.id,
-                          name: displayName,
-                          userRole: item.role ?? "member",
-                        },
-                      })
-                    }
-                    hitSlop={10}
-                    className="items-center justify-center px-1"
-                    style={({ pressed }) =>
-                      pressed ? { opacity: 0.6, transform: [{ scale: 0.96 }] } : undefined
-                    }
-                  >
-                    <MaterialIcons name="assignment" size={20} color="#7C3AED" />
-                  </Pressable>
+                    <Pressable
+                      onPress={() => openActionMenu(item, item.id)}
+                      hitSlop={10}
+                      className="items-center justify-center px-1"
+                      style={({ pressed }) =>
+                        pressed ? { opacity: 0.6, transform: [{ scale: 0.96 }] } : undefined
+                      }
+                    >
+                      <MaterialIcons name="more-vert" size={24} color="#374151" />
+                    </Pressable>
+                  </View>
 
                   <Pressable
                     onPress={() => toggleOpen(item.id)}
@@ -572,6 +705,8 @@ export default function ManageMembers() {
                     <DetailRow label="Contact" value={item.contact} />
                     <DetailRow label="Civil Status" value={item.civilStatus} />
                     <DetailRow label="Status" value={statusLabel[item.status ?? "unregister"]} />
+                    <DetailRow label="Member Started" value={formatTimestamp(item.startedAt)} />
+                    <DetailRow label="Status Changed At" value={formatTimestamp(item.statusChangedAt)} />
                     <DetailRow label="Ministry" value={formatList(item.ministry)} />
                     <DetailRow label="Core Group" value={formatList(item.coreGroup)} />
 
@@ -705,11 +840,56 @@ export default function ManageMembers() {
                 autoCorrect={false}
               />
 
+              <Pressable
+                onPress={openStartedDatePicker}
+                className="gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
+                style={({ pressed }) =>
+                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                }
+              >
+                <View className="mb-1 flex-row items-center gap-2">
+                  <MaterialIcons name="event" size={18} color="#6B7280" />
+                  <Text className="text-xs font-bold uppercase text-slate-500">Member Started</Text>
+                </View>
+                <View className="flex-row items-center justify-between gap-2">
+                  <Text className="flex-1 text-[15px] font-bold text-slate-900">
+                    {formatInputDate(selectedStartedAt)}
+                  </Text>
+                  <MaterialIcons
+                    name={showStartedDatePicker ? "keyboard-arrow-up" : "keyboard-arrow-down"}
+                    size={20}
+                    color="#6B7280"
+                  />
+                </View>
+              </Pressable>
+
+              {showStartedDatePicker ? (
+                <View className="overflow-hidden rounded-[16px] border border-slate-200 bg-slate-50 p-3">
+                  <DateTimePicker
+                    value={new Date(selectedStartedAt || Date.now())}
+                    mode="date"
+                    display={Platform.OS === "ios" ? "spinner" : "default"}
+                    onChange={handleStartedDateChange}
+                  />
+
+                  {Platform.OS === "ios" ? (
+                    <View className="mt-3 flex-row justify-end">
+                      <Pressable
+                        onPress={() => setShowStartedDatePicker(false)}
+                        className="rounded-[14px] bg-slate-900 px-4 py-3"
+                      >
+                        <Text className="font-extrabold text-white">Done</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+
               <View className="flex-row gap-3">
                 <SelectField
                   label="Civil Status"
                   value={selectedCivilStatus}
-                  icon="heart"
+                  icon="favorite"
                   onPress={() => openSelector("civilStatus")}
                 />
 
@@ -896,6 +1076,68 @@ export default function ManageMembers() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {actionMenu.visible && actionMenu.item ? (
+        <Pressable className="absolute inset-0 z-50 bg-transparent" onPress={closeActionMenu}>
+          <View
+            className="absolute w-[176px] overflow-hidden rounded-[18px] bg-white"
+            style={{
+              top: actionMenu.top,
+              left: actionMenu.left,
+              shadowColor: "#000",
+              shadowOpacity: 0.18,
+              shadowRadius: 16,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 10,
+            }}
+          >
+            <View className="border-b border-slate-100 px-4 py-3">
+              <Text className="text-[16px] font-extrabold text-slate-900">Actions</Text>
+              <Text className="mt-0.5 text-[13px] text-slate-500">
+                {actionMenu.item
+                  ? actionMenu.item.fullName?.trim() ||
+                    [actionMenu.item.firstName, actionMenu.item.lastName].filter(Boolean).join(" ").trim() ||
+                    actionMenu.item.name
+                  : ""}
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={() => {
+                const current = actionMenu.item;
+                closeActionMenu();
+                if (current) openEditMember(current);
+              }}
+              className="min-h-[52px] flex-row items-center gap-3 px-4"
+              style={({ pressed }) => (pressed ? { backgroundColor: "#F8FAFC" } : undefined)}
+            >
+              <MaterialIcons name="edit" size={20} color="#2563EB" />
+              <Text className="text-[15px] font-bold text-slate-900">Edit</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                const current = actionMenu.item;
+                closeActionMenu();
+                if (current) openTask(current);
+              }}
+              className="min-h-[52px] flex-row items-center gap-3 px-4"
+              style={({ pressed }) => (pressed ? { backgroundColor: "#F8FAFC" } : undefined)}
+            >
+              <MaterialIcons name="assignment" size={20} color="#7C3AED" />
+              <Text className="text-[15px] font-bold text-slate-900">Task</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={closeActionMenu}
+              className="border-t border-slate-100 min-h-[52px] items-center justify-center"
+              style={({ pressed }) => (pressed ? { backgroundColor: "#F8FAFC" } : undefined)}
+            >
+              <Text className="text-[15px] font-extrabold text-slate-700">Cancel</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -1002,6 +1244,20 @@ function formatList(items?: string[]) {
   if (!items || items.length === 0) return "NA";
   if (items.length <= 2) return items.join(", ");
   return `${items.slice(0, 2).join(", ")} +${items.length - 2}`;
+}
+
+function formatTimestamp(value?: number | null) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "NA";
+  return new Date(value).toLocaleString();
+}
+
+function formatInputDate(value?: number | null) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "Select date";
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function DetailRow({ label, value }: { label: string; value?: string }) {

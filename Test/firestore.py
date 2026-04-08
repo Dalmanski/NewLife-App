@@ -3,8 +3,8 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-collection_name = "tasks"
-document_id = "K30tV4OzqYiM5F283mHY"
+collection_name = "users"
+document_id = "LhGL85pUS60tiqgrBtyL"
 
 # Path to your service account JSON
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
