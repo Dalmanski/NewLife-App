@@ -15,6 +15,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   Modal,
   Pressable,
   ScrollView,
@@ -71,6 +72,12 @@ type SubGroupAssignment = {
   leaderId: string;
   leaderName: string;
   leaderRole: string;
+};
+
+type ActionMenuState = {
+  group: GroupItem;
+  x: number;
+  y: number;
 };
 
 const getMemberName = (raw: any) => {
@@ -134,9 +141,11 @@ const groupConfig: Record<
 export default function ManageGroup() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
+  const { width: screenWidth } = Dimensions.get("window");
 
   const [loading, setLoading] = useState(true);
   const [savingGroup, setSavingGroup] = useState(false);
+  const [deletingGroup, setDeletingGroup] = useState(false);
 
   const [activeKind, setActiveKind] = useState<GroupKind>("ministry");
   const [ministries, setMinistries] = useState<GroupItem[]>([]);
@@ -160,6 +169,8 @@ export default function ManageGroup() {
   const [pickerSelectedIds, setPickerSelectedIds] = useState<string[]>([]);
 
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
+
+  const [actionMenu, setActionMenu] = useState<ActionMenuState | null>(null);
 
   const activeGroups = activeKind === "ministry" ? ministries : coreGroups;
   const activeInfo = groupConfig[activeKind];
@@ -394,6 +405,64 @@ export default function ManageGroup() {
     );
     setExpandedGroupId(null);
     setShowAddModal(true);
+  };
+
+  const confirmDeleteGroup = (group: GroupItem) => {
+    Alert.alert("Are you sure?", `This will permanently delete "${group.name}".`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          setDeletingGroup(true);
+          try {
+            const groupRef = doc(db, groupConfig[group.kind].collectionName, group.id);
+            const memberIds = normalizeIds(
+              group.subgroups.flatMap((subgroup) => subgroup.memberIds ?? [])
+            );
+
+            const batch = writeBatch(db);
+
+            for (const userId of memberIds) {
+              batch.set(
+                doc(db, "users", userId),
+                {
+                  subGroup: {
+                    [group.kind]: deleteField(),
+                  },
+                },
+                { merge: true }
+              );
+            }
+
+            batch.delete(groupRef);
+            await batch.commit();
+
+            if (editingGroup?.id === group.id) {
+              setShowAddModal(false);
+              setEditingGroup(null);
+            }
+
+            await loadData();
+          } catch (error) {
+            Alert.alert(
+              "Error",
+              `Failed to delete ${groupConfig[group.kind].label.toLowerCase()}\n${getErrorMessage(error)}`
+            );
+          } finally {
+            setDeletingGroup(false);
+          }
+        },
+      },
+    ]);
+  };
+
+  const openGroupActionMenu = (group: GroupItem, x: number, y: number) => {
+    setActionMenu({ group, x, y });
+  };
+
+  const closeGroupActionMenu = () => {
+    setActionMenu(null);
   };
 
   const openUserPicker = (mode: PickerMode, subgroupIndex: number | null = null) => {
@@ -724,20 +793,6 @@ export default function ManageGroup() {
     }
   };
 
-  const openGroupBoard = (group: GroupItem) => {
-    const route = group.isActive ? "./task-board" : "./task-list";
-
-    router.push({
-      pathname: route,
-      params: {
-        id: id ? String(id) : "",
-        groupId: group.id,
-        groupName: group.name,
-        groupKind: group.kind,
-      },
-    });
-  };
-
   const selectedPickerTitle =
     pickerMode === "groupLeader"
       ? `Select ${activeInfo.label} Head`
@@ -748,6 +803,15 @@ export default function ManageGroup() {
         : `Select Group ${
             pickerSubgroupIndex !== null ? indexToLetters(pickerSubgroupIndex) : ""
           } Members`;
+
+  const actionMenuWidth = 168;
+  const actionMenuTop = Math.max(12, actionMenu ? actionMenu.y + 8 : 0);
+  const actionMenuLeft = actionMenu
+    ? Math.min(
+        Math.max(12, actionMenu.x - actionMenuWidth + 14),
+        screenWidth - actionMenuWidth - 12
+      )
+    : 0;
 
   return (
     <View className="flex-1 bg-[#F7F8FA]">
@@ -844,10 +908,16 @@ export default function ManageGroup() {
                   </Pressable>
 
                   <Pressable
-                    onPress={() => openEditModal(group)}
+                    onPress={(e) =>
+                      openGroupActionMenu(
+                        group,
+                        e.nativeEvent.pageX,
+                        e.nativeEvent.pageY
+                      )
+                    }
                     className="absolute right-2.5 top-2.5 z-[3] h-[34px] w-[34px] items-center justify-center rounded-full bg-gray-100"
                   >
-                    <Ionicons name="create-outline" size={18} color="#111827" />
+                    <Ionicons name="ellipsis-horizontal" size={18} color="#111827" />
                   </Pressable>
 
                   <Pressable
@@ -937,6 +1007,54 @@ export default function ManageGroup() {
       >
         <Ionicons name="add" size={32} color="white" />
       </Pressable>
+
+      <Modal
+        visible={!!actionMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={closeGroupActionMenu}
+      >
+        <View className="flex-1">
+          <Pressable className="absolute inset-0" onPress={closeGroupActionMenu} />
+          {actionMenu ? (
+            <View
+              style={{
+                position: "absolute",
+                top: actionMenuTop,
+                left: actionMenuLeft,
+                width: actionMenuWidth,
+              }}
+              className="rounded-[16px] border border-gray-200 bg-white p-2 shadow-lg"
+            >
+              <Pressable
+                onPress={() => {
+                  const group = actionMenu.group;
+                  closeGroupActionMenu();
+                  openEditModal(group);
+                }}
+                className="flex-row items-center gap-2 rounded-[12px] px-3 py-3"
+              >
+                <Ionicons name="create-outline" size={18} color="#111827" />
+                <Text className="text-[14px] font-bold text-gray-900">Edit</Text>
+              </Pressable>
+
+              <View className="my-1 h-px bg-gray-100" />
+
+              <Pressable
+                onPress={() => {
+                  const group = actionMenu.group;
+                  closeGroupActionMenu();
+                  confirmDeleteGroup(group);
+                }}
+                className="flex-row items-center gap-2 rounded-[12px] px-3 py-3"
+              >
+                <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                <Text className="text-[14px] font-bold text-red-600">Delete</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
 
       <Modal
         visible={showAddModal}
@@ -1128,9 +1246,9 @@ export default function ManageGroup() {
 
                 <Pressable
                   onPress={saveGroup}
-                  disabled={savingGroup}
+                  disabled={savingGroup || deletingGroup}
                   className={`rounded-[14px] bg-gray-900 px-4 py-3 ${
-                    savingGroup ? "opacity-75" : ""
+                    savingGroup || deletingGroup ? "opacity-75" : ""
                   }`}
                 >
                   <Text className="font-extrabold text-white">

@@ -134,7 +134,9 @@ const normalizeGroupArray = (value: unknown) => {
   return [];
 };
 
-const isAdminRole = (role: string) => role.toLowerCase().includes("admin");
+const normalizeRole = (value: unknown) => String(value ?? "").trim().toLowerCase();
+
+const isAdminRole = (role: string) => role.includes("admin");
 
 const formatDateDisplay = (date: Date) => {
   const day = date.getDate();
@@ -231,9 +233,7 @@ function TaskCard({
         );
       }}
       delayLongPress={500}
-      className={`rounded-[22px] border border-slate-200 bg-white p-4 ${
-        false ? "opacity-25" : ""
-      }`}
+      className="rounded-[22px] border border-slate-200 bg-white p-4"
       style={{
         gap: 12,
         shadowColor: "#0f172a",
@@ -386,10 +386,13 @@ export default function TaskBoard({
     groupName?: string;
     groupKind?: string;
     id?: string;
+    userId?: string;
+    role?: string;
+    userRole?: string;
+    accountRole?: string;
     name?: string;
     memberId?: string;
     memberName?: string;
-    userRole?: string;
   }>();
 
   const currentGroupId = String(params.groupId ?? "");
@@ -397,12 +400,15 @@ export default function TaskBoard({
   const currentGroupKind = String(params.groupKind ?? "");
   const groupCollectionName = currentGroupKind === "coreGroup" ? "coreGroups" : "ministries";
 
-  const currentUserId = String(userId ?? params.id ?? "");
+  const currentUserId = String(userId ?? params.userId ?? params.id ?? "");
   const currentMemberId = String(targetMemberId ?? params.memberId ?? params.id ?? "");
   const currentMemberName = String(
     targetMemberName ?? params.memberName ?? params.name ?? memberName ?? "Member"
   );
-  const initialRole = String(userRole ?? params.userRole ?? "");
+
+  const initialRole = normalizeRole(
+    userRole ?? params.userRole ?? params.accountRole ?? params.role ?? ""
+  );
 
   const hasGroupContext = !!currentGroupId && !!currentGroupName;
   const hasMemberContext = !hasGroupContext && !!currentMemberId;
@@ -455,20 +461,28 @@ export default function TaskBoard({
   }, [columnRects]);
 
   useEffect(() => {
+    if (initialRole) setRole(initialRole);
+  }, [initialRole]);
+
+  useEffect(() => {
     const loadRole = async () => {
-      if (role || !currentUserId) return;
+      if (initialRole || !currentUserId) return;
       try {
         const snap = await getDoc(doc(db, "users", currentUserId));
-        const data = snap.data();
-        setRole(String(data?.role ?? ""));
+        const data = snap.data() as any;
+        const resolvedRole = normalizeRole(
+          data?.role ?? data?.userRole ?? data?.accountRole ?? ""
+        );
+        setRole(resolvedRole);
       } catch {
         setRole("");
       }
     };
     loadRole();
-  }, [currentUserId, role]);
+  }, [currentUserId, initialRole]);
 
-  const canManageTasks = isAdminRole(role);
+  const effectiveRole = normalizeRole(role || initialRole);
+  const canManageTasks = isAdminRole(effectiveRole);
 
   const measureColumns = useCallback(() => {
     const refs: Array<[TaskStatus, React.RefObject<View>]> = [
@@ -532,7 +546,7 @@ export default function TaskBoard({
                 raw?.email ??
                 "Unnamed"
             ),
-            role: String(raw?.role ?? ""),
+            role: normalizeRole(raw?.role ?? raw?.userRole ?? raw?.accountRole ?? ""),
             ministry: normalizeGroupArray(raw?.ministry),
             coreGroup: normalizeGroupArray(raw?.coreGroup ?? raw?.coreGroups),
           };
@@ -1047,6 +1061,20 @@ export default function TaskBoard({
                   </Text>
                 </>
               )}
+            </View>
+
+            <View
+              className={`rounded-full px-3 py-1.5 ${
+                canManageTasks ? "bg-slate-900" : "bg-slate-200"
+              }`}
+            >
+              <Text
+                className={`text-[11px] font-black uppercase tracking-wider ${
+                  canManageTasks ? "text-white" : "text-slate-700"
+                }`}
+              >
+                {canManageTasks ? "Admin" : "Member"}
+              </Text>
             </View>
           </View>
         </View>
