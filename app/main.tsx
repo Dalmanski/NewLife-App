@@ -23,6 +23,7 @@ import EventScreen from "./event";
 import SpecialMeeting from "./member/special-meeting";
 import Volunteers from "./member/volunteers";
 import Tasks from "./task-board";
+import AIAssistance from "./ai-assistance";
 
 const SIDEBAR_WIDTH = 290;
 
@@ -30,6 +31,8 @@ type ScreenComponentProps = {
   userId?: string;
   userRole?: string;
   memberName?: string;
+  userEmail?: string;
+  colorScheme?: 'light' | 'dark';
 };
 
 type ScreenItem = {
@@ -48,6 +51,7 @@ export default function Main() {
 
   const [role, setRole] = useState("");
   const [memberName, setMemberName] = useState("Member");
+  const [userEmail, setUserEmail] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarMounted, setSidebarMounted] = useState(false);
   const [activePath, setActivePath] = useState("");
@@ -64,6 +68,7 @@ export default function Main() {
       setMemberName(
         String(data?.memberName || data?.name || data?.fullName || "Member")
       );
+      setUserEmail(String(data?.email || data?.userEmail || ""));
     };
     load();
   }, [id]);
@@ -147,6 +152,12 @@ export default function Main() {
         component: ManageMembers,
         icon: "person",
       },
+      {
+        title: "AI Assistant",
+        path: "/ai-assistance",
+        component: AIAssistance,
+        icon: "smart-toy",
+      },
     ];
 
     const memberItems: ScreenItem[] = [
@@ -169,6 +180,12 @@ export default function Main() {
         path: "/member/special-meeting",
         component: SpecialMeeting,
         icon: "groups-2",
+      },
+      {
+        title: "AI Assistant",
+        path: "/ai-assistance",
+        component: AIAssistance,
+        icon: "smart-toy",
       },
     ];
 
@@ -287,6 +304,8 @@ export default function Main() {
                 userId={String(id ?? "")}
                 userRole={role}
                 memberName={memberName}
+                userEmail={userEmail}
+                colorScheme={colorScheme as 'light' | 'dark'}
               />
             ) : (
               <View className="flex-1 bg-white" />

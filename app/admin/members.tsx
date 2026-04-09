@@ -15,14 +15,13 @@ import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   ScrollView,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { db } from "../../lib/firebaseConfig";
+import { NewSubgroupModal, AddMembersModal, UserPickerModal, EditGroupModal } from "./members-modal";
 
 type GroupKind = "ministry" | "coreGroup";
 
@@ -120,17 +119,23 @@ export default function Members() {
   const [loading, setLoading] = useState(true);
   const [group, setGroup] = useState<GroupItem | null>(null);
   const [users, setUsers] = useState<UserOption[]>([]);
-
   const [savingAction, setSavingAction] = useState(false);
 
   const [showNewSubgroupModal, setShowNewSubgroupModal] = useState(false);
   const [showAddMembersModal, setShowAddMembersModal] = useState(false);
   const [showUserPickerModal, setShowUserPickerModal] = useState(false);
+  const [showEditGroupModal, setShowEditGroupModal] = useState(false);
 
   const [newSubgroupLeaderId, setNewSubgroupLeaderId] = useState("");
   const [newSubgroupMemberIds, setNewSubgroupMemberIds] = useState<string[]>([]);
   const [targetSubgroupIndex, setTargetSubgroupIndex] = useState<number | null>(null);
   const [memberSelectionIds, setMemberSelectionIds] = useState<string[]>([]);
+  const [editSubgroupLeaderId, setEditSubgroupLeaderId] = useState("");
+
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editLeaderId, setEditLeaderId] = useState("");
+  const [editPickerMode, setEditPickerMode] = useState(false);
 
   const [pickerMode, setPickerMode] = useState<PickerMode>("newSubgroupLeader");
   const [pickerTargetIndex, setPickerTargetIndex] = useState<number | null>(null);
@@ -145,7 +150,8 @@ export default function Members() {
 
     setLoading(true);
     try {
-      const groupRef = doc(db, getCollectionName(groupKind), groupId);
+      const collectionName = getCollectionName(groupKind);
+      const groupRef = doc(db, collectionName, groupId);
       const [groupSnap, usersSnap] = await Promise.all([getDoc(groupRef), getDocs(collection(db, "users"))]);
 
       if (!groupSnap.exists()) {
@@ -198,10 +204,10 @@ export default function Members() {
                 ? subgroup.memberNames.map((x: any) => String(x)).filter(Boolean)
                 : [];
 
-              const memberNames =
-                storedMemberNames.length > 0
-                  ? storedMemberNames.slice(0, memberIds.length)
-                  : memberIds.map((memberId: string) => userLookup.get(memberId)?.name ?? "").filter(Boolean);
+              const memberNames = memberIds.map(
+                (memberId: string, memberIndex: number) =>
+                  userLookup.get(memberId)?.name ?? storedMemberNames[memberIndex] ?? "Unnamed"
+              );
 
               return {
                 id: String(subgroup?.id ?? `${groupSnap.id}-${index}`),
@@ -304,7 +310,7 @@ export default function Members() {
 
   const openMember = (memberId: string) => {
     router.push({
-      pathname: "admin/member",
+      pathname: "/admin/member",
       params: {
         memberId,
         groupId,
@@ -323,6 +329,7 @@ export default function Members() {
   const openAddMembersModal = (subgroupIndex: number) => {
     if (!group) return;
     setTargetSubgroupIndex(subgroupIndex);
+    setEditSubgroupLeaderId(group.subgroups[subgroupIndex]?.leaderId ?? "");
     setMemberSelectionIds(normalizeIds(group.subgroups[subgroupIndex]?.memberIds ?? []));
     setShowAddMembersModal(true);
   };
@@ -340,15 +347,112 @@ export default function Members() {
     setPickerSelectedIds([]);
     setPickerTargetIndex(null);
     setTargetSubgroupIndex(null);
+    setEditSubgroupLeaderId("");
+  };
+
+  const openEditSubgroupLeaderPicker = () => {
+    setEditPickerMode(true);
+    setPickerMode("newSubgroupLeader");
+    setPickerSearch("");
+    setPickerSelectedIds(editSubgroupLeaderId ? [editSubgroupLeaderId] : []);
+    setPickerTargetIndex(targetSubgroupIndex);
+    setShowUserPickerModal(true);
+  };
+
+  const confirmEditSubgroupLeader = () => {
+    const chosenIds = normalizeIds(pickerSelectedIds);
+    const chosenId = chosenIds[0] ?? "";
+    if (!chosenId) return Alert.alert("Error", "Please select a leader");
+    setEditSubgroupLeaderId(chosenId);
+    setShowUserPickerModal(false);
+    setPickerSearch("");
   };
 
   const closeUserPicker = () => {
     setShowUserPickerModal(false);
     setPickerSearch("");
     setPickerTargetIndex(null);
+    if (editPickerMode) {
+      setEditPickerMode(false);
+    }
+  };
+
+  const openEditGroupModal = () => {
+    if (!group) return;
+    setEditName(group.name);
+    setEditDescription(group.description ?? "");
+    setEditLeaderId(group.leaderId ?? "");
+    setShowEditGroupModal(true);
+  };
+
+  const closeEditGroupModal = () => {
+    setShowEditGroupModal(false);
+    setEditName("");
+    setEditDescription("");
+    setEditLeaderId("");
+    setEditPickerMode(false);
+  };
+
+  const openEditLeaderPicker = () => {
+    setEditPickerMode(true);
+    setPickerMode("newSubgroupLeader");
+    setPickerSearch("");
+    setPickerSelectedIds(editLeaderId ? [editLeaderId] : []);
+    setShowUserPickerModal(true);
+  };
+
+  const confirmEditLeaderPicker = () => {
+    const chosenIds = normalizeIds(pickerSelectedIds);
+    const chosenId = chosenIds[0] ?? "";
+    if (!chosenId) return Alert.alert("Error", "Please select a leader");
+    setEditLeaderId(chosenId);
+    setShowUserPickerModal(false);
+    setPickerSearch("");
+    setEditPickerMode(false);
+  };
+
+  const saveEditGroup = async () => {
+    if (!group) return;
+
+    const name = editName.trim();
+    const description = editDescription.trim();
+    const leaderId = editLeaderId.trim();
+
+    if (!name) {
+      return Alert.alert("Error", "Please enter a group name");
+    }
+
+    if (!leaderId) {
+      return Alert.alert("Error", "Please select a leader");
+    }
+
+    const leader = users.find((u) => u.id === leaderId);
+    if (!leader) return Alert.alert("Error", "Selected leader not found");
+
+    const groupRef = doc(db, getCollectionName(groupKind), group.id);
+
+    setSavingAction(true);
+    try {
+      await updateDoc(groupRef, {
+        name,
+        description,
+        leaderId: leader.id,
+        leaderName: leader.name,
+        leaderRole: leader.role,
+        updatedAt: Timestamp.now(),
+      });
+
+      closeEditGroupModal();
+      await loadData();
+    } catch (error) {
+      Alert.alert("Error", `Failed to update group\n${getErrorMessage(error)}`);
+    } finally {
+      setSavingAction(false);
+    }
   };
 
   const openUserPicker = (mode: PickerMode, subgroupIndex: number | null = null) => {
+    setEditPickerMode(false);
     setPickerMode(mode);
     setPickerTargetIndex(subgroupIndex);
     setPickerSearch("");
@@ -368,6 +472,16 @@ export default function Members() {
 
   const confirmUserPicker = () => {
     const chosenIds = normalizeIds(pickerSelectedIds);
+
+    if (editPickerMode) {
+      if (targetSubgroupIndex !== null) {
+        confirmEditSubgroupLeader();
+        return;
+      } else {
+        confirmEditLeaderPicker();
+        return;
+      }
+    }
 
     if (pickerMode === "newSubgroupLeader") {
       const chosenId = chosenIds[0] ?? "";
@@ -550,30 +664,30 @@ export default function Members() {
     const target = group.subgroups[targetSubgroupIndex];
     if (!target) return;
 
-    const existingMemberIds = normalizeIds(target.memberIds ?? []);
+    const newLeaderId = editSubgroupLeaderId.trim();
+    if (!newLeaderId) {
+      return Alert.alert("Error", "Please select a leader");
+    }
+
+    const leader = users.find((u) => u.id === newLeaderId);
+    if (!leader) return Alert.alert("Error", "Selected leader not found");
+
     const blocked = getBlockedIds(targetSubgroupIndex);
+    const selectedIds = normalizeIds(memberSelectionIds).filter((id) => !blocked.has(id) && id !== newLeaderId);
 
-    const allowedSelection = normalizeIds(memberSelectionIds).filter(
-      (id) => !blocked.has(id) || existingMemberIds.includes(id)
-    );
-
-    const nextMemberIds = normalizeIds([...existingMemberIds, ...allowedSelection]).filter(
-      (id) => id !== target.leaderId && id !== group.leaderId
-    );
+    const nextMemberIds = selectedIds.filter((id) => id !== group.leaderId);
 
     if (nextMemberIds.length === 0) {
       return Alert.alert("Error", "Please select members");
     }
 
-    const invalidMember = nextMemberIds.find((id) => blocked.has(id) && !existingMemberIds.includes(id));
-    if (invalidMember) {
-      return Alert.alert("Error", "One or more selected members are already used in this group");
-    }
-
     const nextSubgroup: SubgroupItem = {
       ...target,
+      leaderId: leader.id,
+      leaderName: leader.name,
+      leaderRole: leader.role,
       memberIds: nextMemberIds,
-      memberNames: nextMemberIds.map((memberId) => users.find((u) => u.id === memberId)?.name ?? "").filter(Boolean),
+      memberNames: nextMemberIds.map((memberId) => users.find((u) => u.id === memberId)?.name ?? "Unnamed"),
     };
 
     const nextSubgroups = group.subgroups.map((subgroup, index) =>
@@ -652,6 +766,12 @@ export default function Members() {
               <Text className="mt-1 text-[14px] leading-5 text-gray-600">{group.description}</Text>
             )}
           </View>
+          <Pressable
+            onPress={openEditGroupModal}
+            className="h-10 w-10 items-center justify-center rounded-full bg-gray-100"
+          >
+            <Ionicons name="pencil" size={22} color="#111827" />
+          </Pressable>
         </View>
 
         <View className="flex-row gap-2">
@@ -673,32 +793,31 @@ export default function Members() {
 
         <View className="mt-5 rounded-[18px] border border-gray-200 bg-white p-4">
           <View className="flex-row items-start gap-3">
-            <View className="flex-1 flex-row items-center gap-3">
-              <View className="h-12 w-12 items-center justify-center rounded-2xl bg-gray-900">
-                <Ionicons name="person-circle-outline" size={28} color="white" />
-              </View>
-
-              <View className="flex-1">
-                <Text className="text-[13px] font-bold uppercase tracking-[1px] text-gray-500">
-                  Head / Leader
-                </Text>
-                <Text className="mt-0.5 text-[18px] font-extrabold text-gray-900">{leaderName}</Text>
-              </View>
+            <View className="h-12 w-12 items-center justify-center rounded-2xl bg-gray-900">
+              <Ionicons name="person-circle-outline" size={28} color="white" />
             </View>
 
-            <Pressable
-              onPress={openCreateSubgroupModal}
-              className="mt-1 h-10 w-10 items-center justify-center rounded-full bg-gray-100"
-            >
-              <Ionicons name="add" size={24} color="#111827" />
-            </Pressable>
+            <View className="flex-1">
+              <Text className="text-[13px] font-bold uppercase tracking-[1px] text-gray-500">
+                Head Ministry
+              </Text>
+              <Text className="mt-0.5 text-[18px] font-extrabold text-gray-900">{leaderName}</Text>
+            </View>
           </View>
         </View>
 
         <View className="mt-5">
           <View className="mb-3 flex-row items-center justify-between">
             <Text className="text-[16px] font-extrabold text-gray-900">Groups</Text>
-            <Text className="text-[13px] font-semibold text-gray-500">{totalMembers} items</Text>
+            <View className="flex-row items-center gap-2">
+              <Text className="text-[13px] font-semibold text-gray-500">{totalMembers} items</Text>
+              <Pressable
+                onPress={openCreateSubgroupModal}
+                className="h-10 w-10 items-center justify-center rounded-full bg-gray-100"
+              >
+                <Ionicons name="add" size={24} color="#111827" />
+              </Pressable>
+            </View>
           </View>
 
           {subgroupBlocks.length === 0 ? (
@@ -730,7 +849,7 @@ export default function Members() {
                             onPress={() => openAddMembersModal(subgroupIndex)}
                             className="h-10 w-10 items-center justify-center rounded-full bg-gray-100"
                           >
-                            <Ionicons name="add" size={22} color="#111827" />
+                            <Ionicons name="person-add-outline" size={22} color="#111827" />
                           </Pressable>
                         </View>
                       </View>
@@ -790,346 +909,63 @@ export default function Members() {
         </View>
       </ScrollView>
 
-      <Modal visible={showNewSubgroupModal} transparent animationType="fade" onRequestClose={closeNewSubgroupModal}>
-        <View className="flex-1 items-center justify-center bg-black/45 px-5">
-          <Pressable className="absolute inset-0" onPress={closeNewSubgroupModal} />
-          <View className="w-full max-w-[520px] max-h-[86%] overflow-hidden rounded-[28px] bg-white shadow-lg">
-            <View className="bg-gray-900 px-5 py-4">
-              <View className="flex-row items-center gap-3">
-                <View className="h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
-                  <Ionicons name="people" size={22} color="white" />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-[18px] font-extrabold text-white">Add Subgroup</Text>
-                  <Text className="mt-0.5 text-[13px] font-semibold text-white/70">
-                    {`Group ${indexToLetters(group.subgroups.length)}`}
-                  </Text>
-                </View>
-                <Pressable
-                  onPress={closeNewSubgroupModal}
-                  className="h-10 w-10 items-center justify-center rounded-full bg-white/10"
-                >
-                  <Ionicons name="close" size={22} color="white" />
-                </Pressable>
-              </View>
-            </View>
+      <NewSubgroupModal
+        visible={showNewSubgroupModal}
+        onClose={closeNewSubgroupModal}
+        onCreate={createSubgroup}
+        group={group}
+        newSubgroupLeaderId={newSubgroupLeaderId}
+        newSubgroupMemberIds={newSubgroupMemberIds}
+        userMap={userMap}
+        onOpenUserPicker={openUserPicker}
+        selectedLeader={selectedLeader}
+        savingAction={savingAction}
+        indexToLetters={indexToLetters}
+      />
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              contentContainerClassName="px-5 py-5 gap-4"
-            >
-              <View className="rounded-[20px] border border-gray-200 bg-gray-50 p-4">
-                <Text className="text-[13px] font-extrabold text-gray-500">Leader</Text>
-                <Pressable
-                  onPress={() => openUserPicker("newSubgroupLeader")}
-                  className="mt-2 flex-row items-center justify-between gap-2 rounded-[16px] border border-gray-200 bg-white px-4 py-3"
-                >
-                  <View className="flex-1">
-                    <Text
-                      className={`text-[15px] font-semibold ${
-                        newSubgroupLeaderId ? "text-gray-900" : "text-gray-400"
-                      }`}
-                    >
-                      {newSubgroupLeaderId ? userMap.get(newSubgroupLeaderId)?.name ?? "Select leader" : "Select leader"}
-                    </Text>
-                    {!!selectedLeader && (
-                      <Text className="mt-1 text-[12px] font-semibold text-gray-500">
-                        {selectedLeader.role || "No role"}
-                      </Text>
-                    )}
-                  </View>
-                  <Ionicons name="chevron-down" size={18} color="#6B7280" />
-                </Pressable>
-              </View>
+      <AddMembersModal
+        visible={showAddMembersModal}
+        onClose={closeAddMembersModal}
+        onSave={saveMembersToSubgroup}
+        activeSubgroup={activeSubgroup}
+        memberSelectionIds={memberSelectionIds}
+        userMap={userMap}
+        onOpenUserPicker={openUserPicker}
+        savingAction={savingAction}
+        editSubgroupLeaderId={editSubgroupLeaderId}
+        onEditLeaderClick={openEditSubgroupLeaderPicker}
+      />
 
-              <View className="rounded-[20px] border border-gray-200 bg-white p-4">
-                <Text className="text-[13px] font-extrabold text-gray-500">Members</Text>
+      <UserPickerModal
+        visible={showUserPickerModal}
+        onClose={closeUserPicker}
+        onConfirm={confirmUserPicker}
+        pickerMode={pickerMode}
+        pickerSearch={pickerSearch}
+        onPickerSearchChange={setPickerSearch}
+        filteredUsers={filteredUsers}
+        pickerSelectedIds={pickerSelectedIds}
+        pickerBlockedIds={pickerBlockedIds}
+        onToggleUser={togglePickerUser}
+        selectedPickerTitle={selectedPickerTitle}
+        pickerSelectedUsers={pickerSelectedUsers}
+      />
 
-                <Pressable
-                  onPress={() => openUserPicker("newSubgroupMembers")}
-                  className="mt-3 flex-row items-center justify-between gap-2 rounded-[16px] border border-gray-200 bg-gray-50 px-4 py-3"
-                >
-                  <Text
-                    className={`flex-1 text-[15px] font-semibold ${
-                      newSubgroupMemberIds.length > 0 ? "text-gray-900" : "text-gray-400"
-                    }`}
-                  >
-                    {newSubgroupMemberIds.length > 0
-                      ? `${newSubgroupMemberIds.length} selected`
-                      : "Select members"}
-                  </Text>
-                  <Ionicons name="chevron-down" size={18} color="#6B7280" />
-                </Pressable>
-
-                {newSubgroupMemberIds.length > 0 ? (
-                  <View className="mt-3 gap-2">
-                    {newSubgroupMemberIds.map((memberId) => (
-                      <View
-                        key={memberId}
-                        className="flex-row items-center gap-3 rounded-[14px] border border-gray-200 bg-[#FAFAFA] px-3 py-2.5"
-                      >
-                        <View className="h-8 w-8 items-center justify-center rounded-full bg-gray-200">
-                          <Ionicons name="person" size={16} color="#6B7280" />
-                        </View>
-                        <View className="flex-1">
-                          <Text className="text-[14px] font-bold text-gray-900">
-                            {userMap.get(memberId)?.name ?? "Unnamed"}
-                          </Text>
-                          <Text className="text-[12px] font-semibold text-gray-500">
-                            {userMap.get(memberId)?.role || "No role"}
-                          </Text>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-
-              <View className="flex-row items-center justify-end gap-2.5 pt-1">
-                <Pressable onPress={closeNewSubgroupModal} className="rounded-[14px] bg-gray-200 px-4 py-3">
-                  <Text className="font-extrabold text-gray-900">Cancel</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={createSubgroup}
-                  disabled={savingAction}
-                  className={`rounded-[14px] bg-gray-900 px-4 py-3 ${savingAction ? "opacity-75" : ""}`}
-                >
-                  <Text className="font-extrabold text-white">{savingAction ? "Saving..." : "Create"}</Text>
-                </Pressable>
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={showAddMembersModal} transparent animationType="fade" onRequestClose={closeAddMembersModal}>
-        <View className="flex-1 items-center justify-center bg-black/45 px-5">
-          <Pressable className="absolute inset-0" onPress={closeAddMembersModal} />
-          <View className="w-full max-w-[520px] max-h-[86%] overflow-hidden rounded-[28px] bg-white shadow-lg">
-            <View className="bg-gray-900 px-5 py-4">
-              <View className="flex-row items-center gap-3">
-                <View className="h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
-                  <Ionicons name="person-add" size={22} color="white" />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-[18px] font-extrabold text-white">Add Members</Text>
-                  <Text className="mt-0.5 text-[13px] font-semibold text-white/70">
-                    {activeSubgroup?.name ?? "Subgroup"}
-                  </Text>
-                </View>
-                <Pressable
-                  onPress={closeAddMembersModal}
-                  className="h-10 w-10 items-center justify-center rounded-full bg-white/10"
-                >
-                  <Ionicons name="close" size={22} color="white" />
-                </Pressable>
-              </View>
-            </View>
-
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              contentContainerClassName="px-5 py-5 gap-4"
-            >
-              <View className="rounded-[20px] border border-gray-200 bg-white p-4">
-                <Text className="text-[13px] font-extrabold text-gray-500">Selected Members</Text>
-
-                <Pressable
-                  onPress={() => openUserPicker("existingSubgroupMembers", targetSubgroupIndex)}
-                  className="mt-3 flex-row items-center justify-between gap-2 rounded-[16px] border border-gray-200 bg-gray-50 px-4 py-3"
-                >
-                  <Text
-                    className={`flex-1 text-[15px] font-semibold ${
-                      memberSelectionIds.length > 0 ? "text-gray-900" : "text-gray-400"
-                    }`}
-                  >
-                    {memberSelectionIds.length > 0
-                      ? `${memberSelectionIds.length} selected`
-                      : "Select members"}
-                  </Text>
-                  <Ionicons name="chevron-down" size={18} color="#6B7280" />
-                </Pressable>
-
-                {memberSelectionIds.length > 0 ? (
-                  <View className="mt-3 gap-2">
-                    {memberSelectionIds.map((memberId) => (
-                      <View
-                        key={memberId}
-                        className="flex-row items-center gap-3 rounded-[14px] border border-gray-200 bg-[#FAFAFA] px-3 py-2.5"
-                      >
-                        <View className="h-8 w-8 items-center justify-center rounded-full bg-gray-200">
-                          <Ionicons name="person" size={16} color="#6B7280" />
-                        </View>
-                        <View className="flex-1">
-                          <Text className="text-[14px] font-bold text-gray-900">
-                            {userMap.get(memberId)?.name ?? "Unnamed"}
-                          </Text>
-                          <Text className="text-[12px] font-semibold text-gray-500">
-                            {userMap.get(memberId)?.role || "No role"}
-                          </Text>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-
-              <View className="flex-row items-center justify-end gap-2.5 pt-1">
-                <Pressable onPress={closeAddMembersModal} className="rounded-[14px] bg-gray-200 px-4 py-3">
-                  <Text className="font-extrabold text-gray-900">Cancel</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={saveMembersToSubgroup}
-                  disabled={savingAction}
-                  className={`rounded-[14px] bg-gray-900 px-4 py-3 ${savingAction ? "opacity-75" : ""}`}
-                >
-                  <Text className="font-extrabold text-white">{savingAction ? "Saving..." : "Save"}</Text>
-                </Pressable>
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={showUserPickerModal} transparent animationType="fade" onRequestClose={closeUserPicker}>
-        <View className="flex-1 items-center justify-center bg-black/45 px-5">
-          <Pressable className="absolute inset-0" onPress={closeUserPicker} />
-          <View className="w-full max-w-[560px] max-h-[88%] overflow-hidden rounded-[28px] bg-white shadow-lg">
-            <View className="bg-gray-900 px-5 py-4">
-              <View className="flex-row items-center gap-3">
-                <View className="h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
-                  <Ionicons name={pickerMode === "newSubgroupLeader" ? "person" : "people"} size={22} color="white" />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-[18px] font-extrabold text-white">{selectedPickerTitle}</Text>
-                  <Text className="mt-0.5 text-[13px] font-semibold text-white/70">
-                    {pickerMode === "newSubgroupLeader"
-                      ? "Choose exactly one leader"
-                      : "Pick the people you want to include"}
-                  </Text>
-                </View>
-                <Pressable onPress={closeUserPicker} className="h-10 w-10 items-center justify-center rounded-full bg-white/10">
-                  <Ionicons name="close" size={22} color="white" />
-                </Pressable>
-              </View>
-            </View>
-
-            <View className="px-5 pt-5">
-              <View className="mb-3 flex-row h-[52px] items-center gap-2.5 rounded-[16px] border border-gray-200 bg-white px-4">
-                <Ionicons name="search" size={18} color="#6B7280" />
-                <TextInput
-                  value={pickerSearch}
-                  onChangeText={setPickerSearch}
-                  placeholder="Search users"
-                  placeholderTextColor="#9CA3AF"
-                  scrollEnabled={false}
-                  multiline={false}
-                  textAlignVertical="center"
-                  className="flex-1 min-w-0 text-[15px] text-gray-900"
-                  style={{
-                    paddingVertical: 0,
-                    includeFontPadding: false,
-                  }}
-                />
-              </View>
-
-              {pickerSelectedUsers.length > 0 && pickerMode !== "newSubgroupLeader" ? (
-                <View className="mb-3 rounded-[16px] border border-blue-100 bg-blue-50 px-4 py-3">
-                  <Text className="mb-2 text-[12px] font-extrabold uppercase tracking-[1px] text-blue-700">
-                    Selected
-                  </Text>
-                  <View className="flex-row flex-wrap gap-2">
-                    {pickerSelectedUsers.map((user) => (
-                      <View
-                        key={user.id}
-                        className="flex-row items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-2"
-                      >
-                        <View className="h-6 w-6 items-center justify-center rounded-full bg-blue-100">
-                          <Ionicons name="person" size={13} color="#2563EB" />
-                        </View>
-                        <Text className="max-w-[180px] text-[12px] font-bold text-gray-900" numberOfLines={1}>
-                          {user.name}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              ) : null}
-            </View>
-
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              nestedScrollEnabled
-              keyboardShouldPersistTaps="handled"
-              contentContainerClassName="px-5 pb-4 gap-2.5"
-            >
-              {filteredUsers.length === 0 ? (
-                <Text className="py-5 text-center text-gray-500">No users found</Text>
-              ) : (
-                filteredUsers.map((user) => {
-                  const active = pickerSelectedIds.includes(user.id);
-                  const disabled = pickerBlockedIds.has(user.id) && !active;
-
-                  return (
-                    <Pressable
-                      key={user.id}
-                      onPress={() => {
-                        if (disabled) return;
-                        togglePickerUser(user.id);
-                      }}
-                      className={`flex-row items-center gap-3 rounded-[16px] border p-3 ${
-                        disabled
-                          ? "border-gray-100 bg-gray-50 opacity-50"
-                          : active
-                            ? "border-blue-200 bg-blue-50"
-                            : "border-gray-200 bg-white"
-                      }`}
-                    >
-                      <View className="h-[42px] w-[42px] items-center justify-center rounded-full bg-gray-100">
-                        <Ionicons name="person" size={18} color="#9CA3AF" />
-                      </View>
-
-                      <View className="flex-1">
-                        <Text className="text-[15px] font-extrabold text-gray-900">{user.name}</Text>
-                        {!!user.joinedText && (
-                          <Text className="mt-0.5 text-[13px] font-semibold text-gray-500">
-                            {user.joinedText}
-                          </Text>
-                        )}
-                      </View>
-
-                      {pickerMode === "newSubgroupLeader" ? (
-                        active ? (
-                          <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
-                        ) : (
-                          <Ionicons name="ellipse-outline" size={22} color="#9CA3AF" />
-                        )
-                      ) : active ? (
-                        <Ionicons name="checkbox" size={22} color="#16A34A" />
-                      ) : (
-                        <Ionicons name="square-outline" size={22} color="#9CA3AF" />
-                      )}
-                    </Pressable>
-                  );
-                })
-              )}
-            </ScrollView>
-
-            <View className="flex-row items-center justify-end gap-2.5 px-5 pb-5 pt-2">
-              <Pressable onPress={closeUserPicker} className="rounded-[14px] bg-gray-200 px-4 py-3">
-                <Text className="font-extrabold text-gray-900">Close</Text>
-              </Pressable>
-
-              <Pressable onPress={confirmUserPicker} className="rounded-[14px] bg-gray-900 px-4 py-3">
-                <Text className="font-extrabold text-white">{pickerMode === "newSubgroupLeader" ? "Select" : "Done"}</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <EditGroupModal
+        visible={showEditGroupModal}
+        onClose={closeEditGroupModal}
+        onSave={saveEditGroup}
+        group={group}
+        editName={editName}
+        onEditNameChange={setEditName}
+        editDescription={editDescription}
+        onEditDescriptionChange={setEditDescription}
+        editLeaderId={editLeaderId}
+        userMap={userMap}
+        onOpenUserPicker={openEditLeaderPicker}
+        selectedEditLeader={editLeaderId ? userMap.get(editLeaderId) : null}
+        savingAction={savingAction}
+      />
     </View>
   );
 }
