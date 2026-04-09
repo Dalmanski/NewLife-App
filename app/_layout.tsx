@@ -1,4 +1,4 @@
-import { MaterialIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import * as NavigationBar from "expo-navigation-bar";
 import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -89,7 +89,11 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView className="flex-1">
       <HeaderMenuContext.Provider value={headerValue}>
-        <StatusBar style={colorScheme === "dark" ? "light" : "dark"} backgroundColor={colorScheme === "dark" ? "#111827" : "#ffffff"} translucent={false} />
+        <StatusBar
+          style={colorScheme === "dark" ? "light" : "dark"}
+          backgroundColor={colorScheme === "dark" ? "#111827" : "#ffffff"}
+          translucent={false}
+        />
         <SafeAreaView className="flex-1 bg-gray-100 dark:bg-gray-950">
           {showAppHeader ? (
             <View
@@ -101,8 +105,8 @@ export default function RootLayout() {
             >
               <View className="flex-row items-center">
                 <Pressable onPress={handleLeftPress} className="h-10 w-10 items-center justify-center">
-                  <MaterialIcons
-                    name={isMain ? "menu" : "arrow-back"}
+                  <Ionicons
+                    name={isMain ? "menu-outline" : "chevron-back-outline"}
                     size={28}
                     color={colorScheme === "dark" ? "#F3F4F6" : "#111827"}
                   />
@@ -119,7 +123,11 @@ export default function RootLayout() {
               </View>
 
               <Pressable onPress={handleSettings} className="h-10 w-10 items-center justify-center">
-                <MaterialIcons name="settings" size={28} color={colorScheme === "dark" ? "#F3F4F6" : "#111827"} />
+                <Ionicons
+                  name="ellipsis-vertical"
+                  size={28}
+                  color={colorScheme === "dark" ? "#F3F4F6" : "#111827"}
+                />
               </Pressable>
             </View>
           ) : null}

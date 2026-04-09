@@ -89,3 +89,4 @@ yarn-error.*
 
 # other
 .env
+/app/Gemini Model/secret-key.json

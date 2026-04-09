@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { collection, getDocs, Timestamp } from "firebase/firestore";
-import { useCallback, useState } from "react";
+import { collection, getDocs } from "firebase/firestore";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -11,6 +11,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { TextInput } from "react-native-paper";
 import { db } from "../../lib/firebaseConfig";
 
 const normalizeIds = (ids) => Array.from(new Set(ids.filter(Boolean)));
@@ -45,6 +46,7 @@ export default function Group({ userId, userRole, memberName }) {
 
   const [loading, setLoading] = useState(true);
   const [groups, setGroups] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -111,6 +113,18 @@ export default function Group({ userId, userRole, memberName }) {
     }, [loadData])
   );
 
+  const filteredGroups = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return groups;
+
+    return groups.filter((group) => {
+      const nameMatch = group.name.toLowerCase().includes(q);
+      const descriptionMatch = group.description.toLowerCase().includes(q);
+      const leaderMatch = group.leaderName.toLowerCase().includes(q);
+      return nameMatch || descriptionMatch || leaderMatch;
+    });
+  }, [groups, searchQuery]);
+
   const openGroup = (group) => {
     const baseParams = {
       groupId: group.id,
@@ -136,11 +150,41 @@ export default function Group({ userId, userRole, memberName }) {
         contentContainerClassName="px-5 pt-5 pb-[100px]"
         showsVerticalScrollIndicator={false}
       >
+        <View className="mb-4">
+          <TextInput
+            mode="outlined"
+            label="Search group"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            left={<TextInput.Icon icon="magnify" />}
+            right={
+              searchQuery ? (
+                <TextInput.Icon
+                  icon="close-circle"
+                  onPress={() => setSearchQuery("")}
+                />
+              ) : null
+            }
+            theme={{
+              roundness: 16,
+            }}
+            outlineStyle={{
+              borderRadius: 16,
+            }}
+            contentStyle={{
+              paddingHorizontal: 4,
+            }}
+            style={{
+              backgroundColor: "white",
+            }}
+          />
+        </View>
+
         {loading ? (
           <View className="py-10">
             <ActivityIndicator />
           </View>
-        ) : groups.length === 0 ? (
+        ) : filteredGroups.length === 0 ? (
           <View className="mt-8 items-center justify-center rounded-[18px] border border-dashed border-gray-300 bg-white p-6">
             <Ionicons name="folder-open-outline" size={34} color="#9CA3AF" />
             <Text className="mt-3 text-[15px] font-semibold text-gray-500">
@@ -148,8 +192,8 @@ export default function Group({ userId, userRole, memberName }) {
             </Text>
           </View>
         ) : (
-          <View className="mt-4 flex-row flex-wrap justify-between gap-y-3">
-            {groups.map((group) => (
+          <View className="mt-2 flex-row flex-wrap justify-between gap-y-3">
+            {filteredGroups.map((group) => (
               <Pressable
                 key={group.id}
                 onPress={() => openGroup(group)}

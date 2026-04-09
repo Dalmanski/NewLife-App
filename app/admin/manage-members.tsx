@@ -1,4 +1,4 @@
-import { MaterialIcons } from "@expo/vector-icons";
+import { MaterialIcons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import {
   addDoc,
@@ -11,166 +11,32 @@ import {
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
-  Modal,
-  Platform,
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from "react-native";
-import DateTimePicker from "@react-native-community/datetimepicker";
-import { TextInput as PaperTextInput } from "react-native-paper";
 import { db } from "../../lib/firebaseConfig";
-
-type MemberStatus = "unregister" | "pending" | "register";
-type MemberRole = "member" | "admin";
-type SortField = "name" | "idx";
-type SortDirection = "asc" | "desc";
-type ActiveSelector =
-  | "ministry"
-  | "coreGroup"
-  | "status"
-  | "civilStatus"
-  | "role"
-  | null;
-
-type Member = {
-  id: string;
-  name: string;
-  firstName?: string;
-  lastName?: string;
-  fullName?: string;
-  password?: string;
-  contact?: string;
-  civilStatus?: string;
-  ministry: string[];
-  coreGroup: string[];
-  status: MemberStatus;
-  role?: MemberRole;
-  idx?: number;
-  startedAt?: number | null;
-  statusChangedAt?: number | null;
-};
-
-type OptionItem = {
-  id: string;
-  name: string;
-};
-
-const normalizeArray = (value: unknown) => {
-  if (Array.isArray(value)) return value.map((x) => String(x).trim()).filter(Boolean);
-  if (typeof value === "string" && value.trim()) return [value.trim()];
-  return [];
-};
-
-const normalizeStatus = (value: unknown): MemberStatus => {
-  const status = String(value ?? "").trim().toLowerCase();
-  if (status === "unregister" || status === "pending" || status === "register") return status;
-  return "unregister";
-};
-
-const normalizeRole = (value: unknown): MemberRole => {
-  const role = String(value ?? "").trim().toLowerCase();
-  if (role === "admin") return "admin";
-  return "member";
-};
-
-const normalizeNA = (value: unknown) => {
-  const text = String(value ?? "").trim();
-  if (!text || text.toLowerCase() === "na") return "NA";
-  return text;
-};
-
-const normalizeTimestamp = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-
-    const dateParsed = Date.parse(value);
-    if (!Number.isNaN(dateParsed)) return dateParsed;
-  }
-
-  if (value && typeof value === "object") {
-    const obj = value as {
-      seconds?: number;
-      nanoseconds?: number;
-      toMillis?: () => number;
-    };
-
-    if (typeof obj.toMillis === "function") return obj.toMillis();
-    if (typeof obj.seconds === "number") {
-      return obj.seconds * 1000 + Math.floor((obj.nanoseconds ?? 0) / 1_000_000);
-    }
-  }
-
-  return null;
-};
-
-const splitFullName = (value: unknown) => {
-  const text = String(value ?? "").trim().replace(/\s+/g, " ");
-  if (!text) return { firstName: "", lastName: "" };
-  const parts = text.split(" ");
-  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
-  return {
-    firstName: parts[0],
-    lastName: parts.slice(1).join(" "),
-  };
-};
-
-const emptyForm = {
-  name: "",
-  firstName: "",
-  lastName: "",
-  password: "",
-  contact: "",
-};
-
-const statusLabel: Record<MemberStatus, string> = {
-  unregister: "Unregister",
-  pending: "Pending",
-  register: "Register",
-};
-
-const statusColor: Record<MemberStatus, string> = {
-  unregister: "#DC2626",
-  pending: "#F59E0B",
-  register: "#16A34A",
-};
-
-const roleLabel: Record<MemberRole, string> = {
-  member: "Member",
-  admin: "Admin",
-};
-
-const roleOptions: OptionItem[] = [
-  { id: "member", name: "Member" },
-  { id: "admin", name: "Admin" },
-];
-
-const statusOptions: { id: MemberStatus; name: string }[] = [
-  { id: "unregister", name: "Unregister" },
-  { id: "pending", name: "Pending" },
-  { id: "register", name: "Register" },
-];
-
-const civilStatusOptions: OptionItem[] = [
-  { id: "Single", name: "Single" },
-  { id: "Married", name: "Married" },
-  { id: "Widowed", name: "Widowed" },
-  { id: "Separated", name: "Separated" },
-  { id: "Divorced", name: "Divorced" },
-  { id: "NA", name: "NA" },
-];
-
-type ActionMenuState = {
-  visible: boolean;
-  item: Member | null;
-  top: number;
-  left: number;
-};
+import ManageMemberModal, {
+  ActionMenuState,
+  ActiveSelector,
+  MemberFormState,
+  MemberRecord,
+  MemberRole,
+  MemberStatus,
+  OptionItem,
+  SortDirection,
+  SortField,
+  emptyMemberForm,
+  normalizeNA,
+  normalizeRole,
+  normalizeStatus,
+  normalizeTimestamp,
+  splitFullName,
+  statusColor,
+} from "./manage-members-modal";
 
 export default function ManageMembers() {
   const router = useRouter();
@@ -178,16 +44,15 @@ export default function ManageMembers() {
   const optionsLoadPromiseRef = useRef<Promise<void> | null>(null);
   const actionButtonRefs = useRef<Record<string, View | null>>({});
 
-  const [items, setItems] = useState<Member[]>([]);
+  const [items, setItems] = useState<MemberRecord[]>([]);
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [openId, setOpenId] = useState<string | null>(null);
-  const [sortOpen, setSortOpen] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<MemberFormState>(emptyMemberForm);
   const [selectedStatus, setSelectedStatus] = useState<MemberStatus>("unregister");
   const [selectedCivilStatus, setSelectedCivilStatus] = useState<string>("NA");
   const [selectedRole, setSelectedRole] = useState<MemberRole>("member");
@@ -212,6 +77,7 @@ export default function ManageMembers() {
     left: 0,
   });
 
+  const [sortOpen, setSortOpen] = useState(false);
   const [showStartedDatePicker, setShowStartedDatePicker] = useState(false);
 
   const load = async () => {
@@ -233,8 +99,16 @@ export default function ManageMembers() {
           password: String(data?.password ?? ""),
           contact: normalizeNA(data?.contact),
           civilStatus: normalizeNA(data?.civilStatus),
-          ministry: normalizeArray(data?.ministry),
-          coreGroup: normalizeArray(data?.coreGroup),
+          ministry: Array.isArray(data?.ministry)
+            ? data.ministry.map((x: unknown) => String(x).trim()).filter(Boolean)
+            : typeof data?.ministry === "string" && String(data.ministry).trim()
+              ? [String(data.ministry).trim()]
+              : [],
+          coreGroup: Array.isArray(data?.coreGroup)
+            ? data.coreGroup.map((x: unknown) => String(x).trim()).filter(Boolean)
+            : typeof data?.coreGroup === "string" && String(data.coreGroup).trim()
+              ? [String(data.coreGroup).trim()]
+              : [],
           status: normalizeStatus(data?.status),
           role: normalizeRole(data?.role),
           idx: typeof data?.idx === "number" ? data.idx : undefined,
@@ -338,11 +212,17 @@ export default function ManageMembers() {
   };
 
   const sortLabel =
-    sortField === "name" ? (sortDirection === "asc" ? "A-Z" : "Z-A") : sortDirection === "asc" ? "Idx ↑" : "Idx ↓";
+    sortField === "name"
+      ? sortDirection === "asc"
+        ? "A-Z"
+        : "Z-A"
+      : sortDirection === "asc"
+        ? "Idx ↑"
+        : "Idx ↓";
 
   const openAddMember = () => {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm(emptyMemberForm);
     setSelectedMinistries([]);
     setSelectedCoreGroups([]);
     setSelectedStatus("unregister");
@@ -355,7 +235,7 @@ export default function ManageMembers() {
     setFormOpen(true);
   };
 
-  const openEditMember = (item: Member) => {
+  const openEditMember = (item: MemberRecord) => {
     const split =
       item.firstName || item.lastName
         ? {
@@ -384,7 +264,7 @@ export default function ManageMembers() {
     setFormOpen(true);
   };
 
-  const openTask = (item: Member) => {
+  const openTask = (item: MemberRecord) => {
     const displayName =
       item.fullName?.trim() || [item.firstName, item.lastName].filter(Boolean).join(" ").trim() || item.name;
 
@@ -409,7 +289,7 @@ export default function ManageMembers() {
     });
   };
 
-  const openActionMenu = (item: Member, id: string) => {
+  const openActionMenu = (item: MemberRecord, id: string) => {
     const node = actionButtonRefs.current[id];
 
     if (node && typeof node.measureInWindow === "function") {
@@ -418,10 +298,12 @@ export default function ManageMembers() {
         const menuHeight = 156;
         const gap = 8;
 
-        const left = Math.min(Math.max(8, x + width - menuWidth), Math.max(8, window.width - menuWidth - 8));
-        const belowTop = y + height + gap;
-        const aboveTop = y - menuHeight - gap;
-        const top = belowTop + menuHeight <= window.height - 8 ? belowTop : Math.max(8, aboveTop);
+        const left = Math.max(8, x - menuWidth - gap);
+        const centeredTop = y + height / 2 - menuHeight / 2;
+        const top = Math.min(
+          Math.max(8, centeredTop),
+          Math.max(8, window.height - menuHeight - 8)
+        );
 
         setActionMenu({
           visible: true,
@@ -454,50 +336,6 @@ export default function ManageMembers() {
 
     setActiveSelector(kind);
     setSelectorOpen(true);
-  };
-
-  const toggleSelected = (value: string, kind: ActiveSelector) => {
-    if (kind === "ministry") {
-      setSelectedMinistries((prev) =>
-        prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]
-      );
-      return;
-    }
-
-    if (kind === "coreGroup") {
-      setSelectedCoreGroups((prev) =>
-        prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]
-      );
-      return;
-    }
-
-    if (kind === "status") {
-      setSelectedStatus(value as MemberStatus);
-      return;
-    }
-
-    if (kind === "civilStatus") {
-      setSelectedCivilStatus(value);
-      return;
-    }
-
-    if (kind === "role") {
-      setSelectedRole(value as MemberRole);
-    }
-  };
-
-  const openStartedDatePicker = () => {
-    setShowStartedDatePicker((prev) => !prev);
-  };
-
-  const handleStartedDateChange = (_event: any, date?: Date) => {
-    if (date) {
-      setSelectedStartedAt(date.getTime());
-    }
-
-    if (Platform.OS === "android") {
-      setShowStartedDatePicker(false);
-    }
   };
 
   const save = async () => {
@@ -538,7 +376,7 @@ export default function ManageMembers() {
 
       setFormOpen(false);
       setEditingId(null);
-      setForm(emptyForm);
+      setForm(emptyMemberForm);
       setSelectedMinistries([]);
       setSelectedCoreGroups([]);
       setSelectedStatus("unregister");
@@ -556,54 +394,77 @@ export default function ManageMembers() {
     }
   };
 
-  const activeOptions =
-    activeSelector === "ministry"
-      ? ministryOptions
-      : activeSelector === "coreGroup"
-        ? coreGroupOptions
-        : activeSelector === "civilStatus"
-          ? civilStatusOptions
-          : activeSelector === "role"
-            ? roleOptions
-            : statusOptions;
-
-  const activeTitle =
-    activeSelector === "ministry"
-      ? "Select Ministry"
-      : activeSelector === "coreGroup"
-        ? "Select Core Group"
-        : activeSelector === "civilStatus"
-          ? "Select Civil Status"
-          : activeSelector === "role"
-            ? "Select Role"
-            : "Select Status";
-
-  const activeSelected =
-    activeSelector === "ministry"
-      ? selectedMinistries
-      : activeSelector === "coreGroup"
-        ? selectedCoreGroups
-        : activeSelector === "civilStatus"
-          ? [selectedCivilStatus]
-          : activeSelector === "role"
-            ? [selectedRole]
-            : [selectedStatus];
+  const toggleSortDirection = () => {
+    setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+  };
 
   return (
     <View className="flex-1 bg-slate-50">
       <ScrollView contentContainerClassName="gap-3 px-5 pb-[110px] pt-5">
         <Text className="text-2xl font-extrabold text-slate-900">Manage Members</Text>
 
-        <PaperField
-          label="Search members"
-          value={search}
-          onChangeText={setSearch}
-          icon="magnify"
-          autoCapitalize="none"
-          autoCorrect={false}
+        <ManageMemberModal
+          formOpen={formOpen}
+          setFormOpen={setFormOpen}
+          selectorOpen={selectorOpen}
+          setSelectorOpen={setSelectorOpen}
+          activeSelector={activeSelector}
+          setActiveSelector={setActiveSelector}
+          sortOpen={sortOpen}
+          setSortOpen={setSortOpen}
+          actionMenu={actionMenu}
+          onCloseActionMenu={closeActionMenu}
+          onEditItem={openEditMember}
+          onTaskItem={openTask}
+          editingId={editingId}
+          form={form}
+          setForm={setForm}
+          selectedStatus={selectedStatus}
+          setSelectedStatus={setSelectedStatus}
+          selectedCivilStatus={selectedCivilStatus}
+          setSelectedCivilStatus={setSelectedCivilStatus}
+          selectedRole={selectedRole}
+          setSelectedRole={setSelectedRole}
+          selectedStartedAt={selectedStartedAt}
+          setSelectedStartedAt={setSelectedStartedAt}
+          showPassword={showPassword}
+          setShowPassword={setShowPassword}
+          showStartedDatePicker={showStartedDatePicker}
+          setShowStartedDatePicker={setShowStartedDatePicker}
+          selectedMinistries={selectedMinistries}
+          setSelectedMinistries={setSelectedMinistries}
+          selectedCoreGroups={selectedCoreGroups}
+          setSelectedCoreGroups={setSelectedCoreGroups}
+          ministryOptions={ministryOptions}
+          coreGroupOptions={coreGroupOptions}
+          loadingOptions={loadingOptions}
+          saving={saving}
+          onSave={save}
+          sortField={sortField}
+          setSortField={setSortField}
+          sortDirection={sortDirection}
+          setSortDirection={setSortDirection}
+          onOpenSelector={openSelector}
+          openAddMember={openAddMember}
         />
 
+        <TextInputSearch value={search} onChangeText={setSearch} />
+
         <View className="flex-row items-center gap-2 self-start">
+          <Pressable
+            onPress={toggleSortDirection}
+            className="h-[46px] w-[46px] items-center justify-center rounded-[14px] bg-slate-200"
+            style={({ pressed }) =>
+              pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+            }
+          >
+            <MaterialCommunityIcons
+              name={sortDirection === "asc" ? "sort-ascending" : "sort-descending"}
+              size={22}
+              color="#111827"
+            />
+          </Pressable>
+
           <Pressable
             onPress={() => setSortOpen(true)}
             className="h-[46px] flex-row items-center gap-1.5 rounded-[14px] bg-slate-200 px-4"
@@ -611,23 +472,8 @@ export default function ManageMembers() {
               pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
             }
           >
-            <MaterialIcons name="sort" size={20} color="#111827" />
             <Text className="text-sm font-bold text-slate-900">{sortLabel}</Text>
             <MaterialIcons name="arrow-drop-down" size={22} color="#111827" />
-          </Pressable>
-
-          <Pressable
-            onPress={() => setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))}
-            className="h-[46px] w-[46px] items-center justify-center rounded-[14px] bg-slate-200"
-            style={({ pressed }) =>
-              pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-            }
-          >
-            <MaterialIcons
-              name={sortDirection === "asc" ? "arrow-upward" : "arrow-downward"}
-              size={22}
-              color="#111827"
-            />
           </Pressable>
         </View>
 
@@ -704,7 +550,7 @@ export default function ManageMembers() {
                     <DetailRow label="Full Name" value={item.fullName} />
                     <DetailRow label="Contact" value={item.contact} />
                     <DetailRow label="Civil Status" value={item.civilStatus} />
-                    <DetailRow label="Status" value={statusLabel[item.status ?? "unregister"]} />
+                    <DetailRow label="Status" value={item.status ? item.status : "unregister"} />
                     <DetailRow label="Member Started" value={formatTimestamp(item.startedAt)} />
                     <DetailRow label="Status Changed At" value={formatTimestamp(item.statusChangedAt)} />
                     <DetailRow label="Ministry" value={formatList(item.ministry)} />
@@ -746,518 +592,35 @@ export default function ManageMembers() {
       >
         <MaterialIcons name="person-add-alt-1" size={24} color="#fff" />
       </Pressable>
-
-      <Modal
-        visible={formOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setFormOpen(false)}
-      >
-        <Pressable className="flex-1 justify-end bg-black/40" onPress={() => setFormOpen(false)}>
-          <Pressable
-            className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2"
-            onPress={() => {}}
-          >
-            <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
-            <View className="mb-3 flex-row items-center justify-between gap-3">
-              <Text className="flex-1 text-[22px] font-extrabold text-slate-900">
-                {editingId ? "Edit Member" : "Add Member"}
-              </Text>
-
-              <Pressable
-                onPress={() => openSelector("role")}
-                className="flex-row items-center gap-2 rounded-[14px] border border-slate-200 bg-slate-50 px-3 py-2"
-                style={({ pressed }) =>
-                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                }
-              >
-                <MaterialIcons name="admin-panel-settings" size={18} color="#6B7280" />
-                <Text className="text-[12px] font-extrabold uppercase tracking-[0.6px] text-slate-500">
-                  Role:
-                </Text>
-                <Text className="text-[15px] font-bold text-slate-900">{roleLabel[selectedRole]}</Text>
-              </Pressable>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="gap-3 pb-2">
-              <PaperField
-                label="Nickname"
-                value={form.name}
-                onChangeText={(value) => setForm((prev) => ({ ...prev, name: value }))}
-                icon="account"
-                autoCapitalize="words"
-                autoCorrect={false}
-              />
-
-              <View className="flex-row gap-3">
-                <View className="flex-1">
-                  <PaperField
-                    label="First Name"
-                    value={form.firstName}
-                    onChangeText={(value) => setForm((prev) => ({ ...prev, firstName: value }))}
-                    icon="account-outline"
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
-                </View>
-
-                <View className="flex-1">
-                  <PaperField
-                    label="Last Name"
-                    value={form.lastName}
-                    onChangeText={(value) => setForm((prev) => ({ ...prev, lastName: value }))}
-                    icon="account-outline"
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
-                </View>
-              </View>
-
-              <PaperField
-                label="Password"
-                value={form.password}
-                onChangeText={(value) => setForm((prev) => ({ ...prev, password: value }))}
-                icon="lock"
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
-                rightIcon={showPassword ? "eye-off" : "eye"}
-                onRightPress={() => setShowPassword((prev) => !prev)}
-              />
-
-              <PaperField
-                label="Contact"
-                value={form.contact}
-                onChangeText={(value) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    contact: value.replace(/[^0-9]/g, ""),
-                  }))
-                }
-                icon="phone"
-                keyboardType="phone-pad"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-
-              <Pressable
-                onPress={openStartedDatePicker}
-                className="gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
-                style={({ pressed }) =>
-                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                }
-              >
-                <View className="mb-1 flex-row items-center gap-2">
-                  <MaterialIcons name="event" size={18} color="#6B7280" />
-                  <Text className="text-xs font-bold uppercase text-slate-500">Member Started</Text>
-                </View>
-                <View className="flex-row items-center justify-between gap-2">
-                  <Text className="flex-1 text-[15px] font-bold text-slate-900">
-                    {formatInputDate(selectedStartedAt)}
-                  </Text>
-                  <MaterialIcons
-                    name={showStartedDatePicker ? "keyboard-arrow-up" : "keyboard-arrow-down"}
-                    size={20}
-                    color="#6B7280"
-                  />
-                </View>
-              </Pressable>
-
-              {showStartedDatePicker ? (
-                <View className="overflow-hidden rounded-[16px] border border-slate-200 bg-slate-50 p-3">
-                  <DateTimePicker
-                    value={new Date(selectedStartedAt || Date.now())}
-                    mode="date"
-                    display={Platform.OS === "ios" ? "spinner" : "default"}
-                    onChange={handleStartedDateChange}
-                  />
-
-                  {Platform.OS === "ios" ? (
-                    <View className="mt-3 flex-row justify-end">
-                      <Pressable
-                        onPress={() => setShowStartedDatePicker(false)}
-                        className="rounded-[14px] bg-slate-900 px-4 py-3"
-                      >
-                        <Text className="font-extrabold text-white">Done</Text>
-                      </Pressable>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-
-              <View className="flex-row gap-3">
-                <SelectField
-                  label="Civil Status"
-                  value={selectedCivilStatus}
-                  icon="favorite"
-                  onPress={() => openSelector("civilStatus")}
-                />
-
-                <SelectField
-                  label="Status"
-                  value={statusLabel[selectedStatus]}
-                  icon="badge"
-                  onPress={() => openSelector("status")}
-                />
-              </View>
-
-              <SelectField
-                label="Ministry"
-                value={selectedMinistries.length ? selectedMinistries.join(", ") : "NA"}
-                icon="groups"
-                onPress={() => openSelector("ministry")}
-              />
-
-              <SelectField
-                label="Core Group"
-                value={selectedCoreGroups.length ? selectedCoreGroups.join(", ") : "NA"}
-                icon="group-work"
-                onPress={() => openSelector("coreGroup")}
-              />
-
-              <View className="flex-row justify-end gap-2.5 pt-1">
-                <Pressable
-                  onPress={() => setFormOpen(false)}
-                  className="rounded-[14px] bg-slate-200 px-4 py-3"
-                  style={({ pressed }) =>
-                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                  }
-                >
-                  <Text className="font-extrabold text-slate-900">Cancel</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={save}
-                  disabled={saving}
-                  className="rounded-[14px] bg-slate-900 px-4 py-3"
-                  style={({ pressed }) => [
-                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined,
-                    saving ? { opacity: 0.7 } : undefined,
-                  ]}
-                >
-                  <Text className="font-extrabold text-white">
-                    {saving ? "Saving..." : editingId ? "Update Member" : "Add Member"}
-                  </Text>
-                </Pressable>
-              </View>
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal
-        visible={selectorOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSelectorOpen(false)}
-      >
-        <Pressable className="flex-1 justify-end bg-black/40" onPress={() => setSelectorOpen(false)}>
-          <Pressable
-            className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2"
-            onPress={() => {}}
-          >
-            <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
-            <Text className="mb-3 text-[22px] font-extrabold text-slate-900">{activeTitle}</Text>
-
-            <ScrollView
-              className="max-h-[430px]"
-              contentContainerClassName="gap-2.5 pb-3"
-              showsVerticalScrollIndicator={false}
-            >
-              {loadingOptions && (activeSelector === "ministry" || activeSelector === "coreGroup") ? (
-                <View className="py-5">
-                  <Text className="text-center text-slate-500">Loading...</Text>
-                </View>
-              ) : activeOptions.length === 0 ? (
-                <Text className="py-5 text-center text-slate-500">No options available</Text>
-              ) : (
-                activeOptions.map((item) => {
-                  const isStatus = activeSelector === "status";
-                  const isCivilStatus = activeSelector === "civilStatus";
-                  const isRole = activeSelector === "role";
-                  const selected = isStatus
-                    ? selectedStatus === item.id
-                    : isCivilStatus
-                      ? selectedCivilStatus === item.name
-                      : isRole
-                        ? selectedRole === item.id
-                        : activeSelected.includes(item.name);
-
-                  return (
-                    <Pressable
-                      key={item.id}
-                      onPress={() =>
-                        toggleSelected(
-                          isStatus || isCivilStatus || isRole ? item.id : item.name,
-                          activeSelector
-                        )
-                      }
-                      className={`min-h-[48px] flex-row items-center gap-3 rounded-[14px] px-4 ${
-                        selected ? "bg-blue-50" : "bg-slate-50"
-                      }`}
-                      style={({ pressed }) =>
-                        pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                      }
-                    >
-                      <View className="h-[22px] w-[22px] items-center justify-center rounded-md border border-slate-400 bg-white">
-                        {selected ? <Text className="text-sm font-extrabold text-emerald-600">✓</Text> : null}
-                      </View>
-                      <Text className="flex-1 text-[15px] font-bold text-slate-900">{item.name}</Text>
-                    </Pressable>
-                  );
-                })
-              )}
-            </ScrollView>
-
-            <Pressable
-              onPress={() => setSelectorOpen(false)}
-              className="mt-3 self-end rounded-[14px] bg-slate-200 px-4 py-3"
-              style={({ pressed }) =>
-                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-              }
-            >
-              <Text className="font-extrabold text-slate-900">Close</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal
-        visible={sortOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setSortOpen(false)}
-      >
-        <Pressable className="flex-1 bg-black/20 pt-[180px] pl-5" onPress={() => setSortOpen(false)}>
-          <Pressable
-            className="w-[170px] overflow-hidden rounded-2xl border border-slate-200 bg-white"
-            onPress={() => {}}
-            style={{
-              shadowColor: "#000",
-              shadowOpacity: 0.14,
-              shadowRadius: 12,
-              shadowOffset: { width: 0, height: 6 },
-              elevation: 8,
-            }}
-          >
-            <Text className="px-4 pb-2 pt-4 text-[13px] font-extrabold text-slate-900">Sort by</Text>
-
-            <Pressable
-              onPress={() => {
-                setSortField("name");
-                setSortOpen(false);
-              }}
-              className={`min-h-[48px] flex-row items-center justify-between rounded-[14px] px-4 ${
-                sortField === "name" ? "bg-blue-50" : "bg-slate-50"
-              }`}
-              style={({ pressed }) =>
-                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-              }
-            >
-              <Text className="text-[15px] font-bold text-slate-900">A-Z</Text>
-              {sortField === "name" ? <MaterialIcons name="check" size={18} color="#2563EB" /> : null}
-            </Pressable>
-
-            <Pressable
-              onPress={() => {
-                setSortField("idx");
-                setSortOpen(false);
-              }}
-              className={`min-h-[48px] flex-row items-center justify-between rounded-[14px] px-4 ${
-                sortField === "idx" ? "bg-blue-50" : "bg-slate-50"
-              }`}
-              style={({ pressed }) =>
-                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-              }
-            >
-              <Text className="text-[15px] font-bold text-slate-900">Idx</Text>
-              {sortField === "idx" ? <MaterialIcons name="check" size={18} color="#2563EB" /> : null}
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {actionMenu.visible && actionMenu.item ? (
-        <Pressable className="absolute inset-0 z-50 bg-transparent" onPress={closeActionMenu}>
-          <View
-            className="absolute w-[176px] overflow-hidden rounded-[18px] bg-white"
-            style={{
-              top: actionMenu.top,
-              left: actionMenu.left,
-              shadowColor: "#000",
-              shadowOpacity: 0.18,
-              shadowRadius: 16,
-              shadowOffset: { width: 0, height: 8 },
-              elevation: 10,
-            }}
-          >
-            <View className="border-b border-slate-100 px-4 py-3">
-              <Text className="text-[16px] font-extrabold text-slate-900">Actions</Text>
-              <Text className="mt-0.5 text-[13px] text-slate-500">
-                {actionMenu.item
-                  ? actionMenu.item.fullName?.trim() ||
-                    [actionMenu.item.firstName, actionMenu.item.lastName].filter(Boolean).join(" ").trim() ||
-                    actionMenu.item.name
-                  : ""}
-              </Text>
-            </View>
-
-            <Pressable
-              onPress={() => {
-                const current = actionMenu.item;
-                closeActionMenu();
-                if (current) openEditMember(current);
-              }}
-              className="min-h-[52px] flex-row items-center gap-3 px-4"
-              style={({ pressed }) => (pressed ? { backgroundColor: "#F8FAFC" } : undefined)}
-            >
-              <MaterialIcons name="edit" size={20} color="#2563EB" />
-              <Text className="text-[15px] font-bold text-slate-900">Edit</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => {
-                const current = actionMenu.item;
-                closeActionMenu();
-                if (current) openTask(current);
-              }}
-              className="min-h-[52px] flex-row items-center gap-3 px-4"
-              style={({ pressed }) => (pressed ? { backgroundColor: "#F8FAFC" } : undefined)}
-            >
-              <MaterialIcons name="assignment" size={20} color="#7C3AED" />
-              <Text className="text-[15px] font-bold text-slate-900">Task</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={closeActionMenu}
-              className="border-t border-slate-100 min-h-[52px] items-center justify-center"
-              style={({ pressed }) => (pressed ? { backgroundColor: "#F8FAFC" } : undefined)}
-            >
-              <Text className="text-[15px] font-extrabold text-slate-700">Cancel</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
 
-function PaperField({
-  label,
+function TextInputSearch({
   value,
   onChangeText,
-  icon,
-  rightIcon,
-  onRightPress,
-  secureTextEntry,
-  keyboardType,
-  autoCapitalize,
-  autoCorrect,
 }: {
-  label: string;
   value: string;
   onChangeText: (value: string) => void;
-  icon: string;
-  rightIcon?: string;
-  onRightPress?: () => void;
-  secureTextEntry?: boolean;
-  keyboardType?: React.ComponentProps<typeof PaperTextInput>["keyboardType"];
-  autoCapitalize?: React.ComponentProps<typeof PaperTextInput>["autoCapitalize"];
-  autoCorrect?: boolean;
 }) {
   return (
-    <PaperTextInput
-      mode="outlined"
-      label={label}
-      value={value}
-      onChangeText={onChangeText}
-      left={<PaperTextInput.Icon icon={icon} />}
-      right={
-        rightIcon
-          ? (props) => (
-              <PaperTextInput.Icon
-                {...props}
-                icon={rightIcon}
-                onPress={onRightPress}
-                forceTextInputFocus={false}
-              />
-            )
-          : undefined
-      }
-      secureTextEntry={secureTextEntry}
-      keyboardType={keyboardType}
-      autoCapitalize={autoCapitalize}
-      autoCorrect={autoCorrect}
-      dense
-      style={{
-        backgroundColor: "#FFFFFF",
-      }}
-      outlineStyle={{
-        borderRadius: 14,
-        borderColor: "#E2E8F0",
-      }}
-      contentStyle={{
-        paddingVertical: 6,
-      }}
-      theme={{
-        roundness: 14,
-        colors: {
-          primary: "#2563EB",
-        },
-      }}
-    />
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  icon,
-  onPress,
-}: {
-  label: string;
-  value: string;
-  icon: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      className="flex-1 gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
-      style={({ pressed }) =>
-        pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-      }
-    >
-      <View className="mb-1 flex-row items-center gap-2">
-        <MaterialIcons name={icon as any} size={18} color="#6B7280" />
-        <Text className="text-xs font-bold uppercase text-slate-500">{label}</Text>
+    <View className="rounded-[14px] border border-slate-200 bg-white px-4 py-3">
+      <Text className="mb-1 text-xs font-bold uppercase text-slate-500">Search members</Text>
+      <View className="flex-row items-center gap-2 rounded-[12px] bg-slate-50 px-3 py-2">
+        <MaterialIcons name="search" size={20} color="#6B7280" />
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder="Type to search"
+          placeholderTextColor="#94A3B8"
+          className="flex-1 text-[15px] text-slate-900"
+          autoCorrect={false}
+          autoCapitalize="none"
+          returnKeyType="search"
+        />
       </View>
-      <View className="flex-row items-center justify-between gap-2">
-        <Text className="flex-1 text-[15px] font-bold text-slate-900">{value}</Text>
-        <MaterialIcons name="keyboard-arrow-down" size={20} color="#6B7280" />
-      </View>
-    </Pressable>
+    </View>
   );
-}
-
-function formatList(items?: string[]) {
-  if (!items || items.length === 0) return "NA";
-  if (items.length <= 2) return items.join(", ");
-  return `${items.slice(0, 2).join(", ")} +${items.length - 2}`;
-}
-
-function formatTimestamp(value?: number | null) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "NA";
-  return new Date(value).toLocaleString();
-}
-
-function formatInputDate(value?: number | null) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "Select date";
-  return new Date(value).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 function DetailRow({ label, value }: { label: string; value?: string }) {
@@ -1271,4 +634,15 @@ function DetailRow({ label, value }: { label: string; value?: string }) {
       <Text className="text-[15px] font-semibold text-slate-900">{value}</Text>
     </View>
   );
+}
+
+function formatList(items?: string[]) {
+  if (!items || items.length === 0) return "NA";
+  if (items.length <= 2) return items.join(", ");
+  return `${items.slice(0, 2).join(", ")} +${items.length - 2}`;
+}
+
+function formatTimestamp(value?: number | null) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "NA";
+  return new Date(value).toLocaleString();
 }

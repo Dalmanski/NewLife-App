@@ -1,7 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import { useFocusEffect } from "@react-navigation/native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   addDoc,
   collection,
@@ -11,6 +10,7 @@ import {
   getDocs,
   Timestamp,
   updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 import React, {
   useCallback,
@@ -22,18 +22,16 @@ import React, {
 import {
   Alert,
   Animated,
-  Modal,
   PanResponder,
-  Platform,
   Pressable,
   ScrollView,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { db } from "../lib/firebaseConfig";
+import { ListModal, TaskModal } from "./task-board-modal";
 
-type TaskStatus = "todo" | "doing" | "done";
+type TaskStatus = string;
 
 type ChecklistItem = {
   text: string;
@@ -98,9 +96,21 @@ type ColumnRect = {
   height: number;
 };
 
+type CardRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 type GroupInfo = {
   name: string;
   description: string;
+};
+
+type BoardColumn = {
+  id: string;
+  label: string;
 };
 
 type TaskBoardProps = {
@@ -111,14 +121,12 @@ type TaskBoardProps = {
   targetMemberName?: string;
 };
 
-const statusList: Array<{
-  key: TaskStatus;
-  label: string;
-}> = [
-  { key: "todo", label: "To Do" },
-  { key: "doing", label: "Doing" },
-  { key: "done", label: "Done" },
-];
+const defaultColumnLabels = ["To Do", "Pending", "Done"];
+
+const defaultColumns: BoardColumn[] = defaultColumnLabels.map((label) => ({
+  id: label.toLowerCase().replace(/\s+/g, ""),
+  label,
+}));
 
 const normalizeChecklist = (value: TaskDoc["checklist"] = []) => {
   return value.map((item) =>
@@ -173,6 +181,47 @@ const formatDeadlineText = (deadline?: string, deadlineAt?: Timestamp) => {
   return deadline;
 };
 
+const createColumnId = () => {
+  return `list-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+};
+
+const normalizeColumns = (value: unknown): BoardColumn[] => {
+  if (!Array.isArray(value)) return defaultColumns;
+
+  const next: BoardColumn[] = [];
+  const seen = new Set<string>();
+
+  value.forEach((item) => {
+    let label = "";
+    let id = "";
+
+    if (typeof item === "string") {
+      label = String(item ?? "").trim();
+      if (!label) return;
+    } else if (item && typeof item === "object") {
+      const raw = item as any;
+      label = String(raw?.label ?? raw?.name ?? "").trim();
+      id = String(raw?.id ?? raw?.key ?? "").trim();
+      if (!label) return;
+    }
+
+    if (!id) {
+      const normalized = label.toLowerCase();
+      const defaultCol = defaultColumns.find(
+        (col) => col.label.toLowerCase() === normalized
+      );
+      id = defaultCol?.id || createColumnId();
+    }
+
+    if (!seen.has(id)) {
+      seen.add(id);
+      next.push({ id, label });
+    }
+  });
+
+  return next.length > 0 ? next : defaultColumns;
+};
+
 type TaskCardProps = {
   task: TaskItem;
   onOpen: (task: TaskItem) => void;
@@ -181,6 +230,7 @@ type TaskCardProps = {
   onStartDrag: (task: TaskItem, x: number, y: number, width: number, height: number) => void;
   canManageTask: boolean;
   showGroupMeta: boolean;
+  onMeasure: (taskId: string, rect: CardRect) => void;
 };
 
 function TaskCard({
@@ -191,10 +241,12 @@ function TaskCard({
   onStartDrag,
   canManageTask,
   showGroupMeta,
+  onMeasure,
 }: TaskCardProps) {
   const [layout, setLayout] = useState({ width: 300, height: 120 });
   const [showChecklist, setShowChecklist] = useState(false);
   const suppressOpen = useRef(false);
+  const cardRef = useRef<any>(null);
 
   const blockOpenBriefly = () => {
     suppressOpen.current = true;
@@ -202,6 +254,14 @@ function TaskCard({
       suppressOpen.current = false;
     }, 150);
   };
+
+  const measureCard = useCallback(() => {
+    requestAnimationFrame(() => {
+      cardRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
+        onMeasure(task.id, { x, y, width, height });
+      });
+    });
+  }, [onMeasure, task.id]);
 
   const checklistDone = task.checklist.filter((x) => x.done).length;
   const checklistTotal = task.checklist.length;
@@ -213,12 +273,14 @@ function TaskCard({
 
   return (
     <Pressable
-      onLayout={(e) =>
+      ref={cardRef}
+      onLayout={(e) => {
         setLayout({
           width: e.nativeEvent.layout.width,
           height: e.nativeEvent.layout.height,
-        })
-      }
+        });
+        measureCard();
+      }}
       onPress={() => {
         if (!suppressOpen.current && canManageTask) onOpen(task);
       }}
@@ -381,6 +443,7 @@ export default function TaskBoard({
   targetMemberId,
   targetMemberName,
 }: TaskBoardProps) {
+  const router = useRouter();
   const params = useLocalSearchParams<{
     groupId?: string;
     groupName?: string;
@@ -421,36 +484,30 @@ export default function TaskBoard({
     name: currentGroupName,
     description: "",
   });
+  const [columns, setColumns] = useState<BoardColumn[]>(defaultColumns);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showListModal, setShowListModal] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingColumnId, setEditingColumnId] = useState<string | null>(null);
+  const [listName, setListName] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDescription, setTaskDescription] = useState("");
   const [taskChecklist, setTaskChecklist] = useState<ChecklistItem[]>([
     { text: "", done: false },
   ]);
-  const [selectedStatus, setSelectedStatus] = useState<TaskStatus>("todo");
+  const [selectedStatus, setSelectedStatus] = useState<string>(defaultColumns[0].id);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
   const [deadline, setDeadline] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [columnRects, setColumnRects] = useState<Record<TaskStatus, ColumnRect | null>>({
-    todo: null,
-    doing: null,
-    done: null,
-  });
+  const [columnRects, setColumnRects] = useState<Record<string, ColumnRect | null>>({});
   const [role, setRole] = useState(initialRole);
 
   const dragStateRef = useRef<DragState | null>(null);
-  const columnRectsRef = useRef<Record<TaskStatus, ColumnRect | null>>({
-    todo: null,
-    doing: null,
-    done: null,
-  });
-
-  const todoColRef = useRef<View | null>(null);
-  const doingColRef = useRef<View | null>(null);
-  const doneColRef = useRef<View | null>(null);
+  const columnRectsRef = useRef<Record<string, ColumnRect | null>>({});
+  const cardRectsRef = useRef<Record<string, CardRect | null>>({});
+  const columnRefs = useRef<Record<string, View | null>>({});
 
   useEffect(() => {
     dragStateRef.current = dragState;
@@ -463,6 +520,12 @@ export default function TaskBoard({
   useEffect(() => {
     if (initialRole) setRole(initialRole);
   }, [initialRole]);
+
+  useEffect(() => {
+    if (!columns.some((column) => column.id === selectedStatus) && columns[0]) {
+      setSelectedStatus(columns[0].id);
+    }
+  }, [columns, selectedStatus]);
 
   useEffect(() => {
     const loadRole = async () => {
@@ -484,22 +547,35 @@ export default function TaskBoard({
   const effectiveRole = normalizeRole(role || initialRole);
   const canManageTasks = isAdminRole(effectiveRole);
 
-  const measureColumns = useCallback(() => {
-    const refs: Array<[TaskStatus, React.RefObject<View>]> = [
-      ["todo", todoColRef],
-      ["doing", doingColRef],
-      ["done", doneColRef],
-    ];
+  const applyColumns = useCallback(
+    async (nextColumns: BoardColumn[]) => {
+      setColumns(nextColumns);
 
-    refs.forEach(([status, ref]) => {
-      ref.current?.measureInWindow((x, y, width, height) => {
+      if (!hasGroupContext || !currentGroupId) return;
+
+      try {
+        await updateDoc(doc(db, groupCollectionName, currentGroupId), {
+          taskColumns: nextColumns,
+          updatedAt: Timestamp.now(),
+        });
+      } catch {
+        Alert.alert("Error", "Failed to save lists");
+      }
+    },
+    [currentGroupId, groupCollectionName, hasGroupContext]
+  );
+
+  const measureColumns = useCallback(() => {
+    columns.forEach((column) => {
+      const ref = columnRefs.current[column.id];
+      ref?.measureInWindow((x: number, y: number, width: number, height: number) => {
         setColumnRects((prev) => ({
           ...prev,
-          [status]: { x, y, width, height },
+          [column.id]: { x, y, width, height },
         }));
       });
     });
-  }, []);
+  }, [columns]);
 
   const loadTasks = useCallback(async () => {
     if (hasGroupContext && (!currentGroupId || !currentGroupName)) {
@@ -564,7 +640,10 @@ export default function TaskBoard({
             title: String(data.title ?? "").trim(),
             description: String(data.description ?? "").trim(),
             checklist: normalizeChecklist(data.checklist),
-            status: (data.status as TaskStatus) || "todo",
+            status: (() => {
+              const st = String(data.status ?? "").trim().toLowerCase();
+              return st || "todo";
+            })(),
             order: Number(data.order ?? 0),
             deadline: String(data.deadline ?? ""),
             deadlineAt: data.deadlineAt,
@@ -598,6 +677,9 @@ export default function TaskBoard({
           name: String(groupData?.name ?? currentGroupName ?? "Group"),
           description: String(groupData?.description ?? ""),
         });
+        setColumns(normalizeColumns(groupData?.taskColumns));
+      } else {
+        setColumns(defaultColumns);
       }
 
       setUsers(userData);
@@ -610,7 +692,6 @@ export default function TaskBoard({
   }, [
     currentGroupId,
     currentGroupName,
-    currentGroupKind,
     currentMemberId,
     currentUserId,
     groupCollectionName,
@@ -639,40 +720,44 @@ export default function TaskBoard({
   }, [users, currentGroupKind, currentGroupName, hasGroupContext]);
 
   const groupedTasks = useMemo(() => {
-    const map: Record<TaskStatus, TaskItem[]> = {
-      todo: [],
-      doing: [],
-      done: [],
-    };
+    const map: Record<string, TaskItem[]> = {};
+    const fallbackStatus = columns[0]?.id ?? "todo";
 
-    tasks.forEach((task) => {
-      map[task.status].push(task);
+    columns.forEach((column) => {
+      map[column.id] = [];
     });
 
-    (Object.keys(map) as TaskStatus[]).forEach((key) => {
-      map[key].sort((a, b) => a.order - b.order);
+    tasks.forEach((task) => {
+      const status = map[task.status] ? task.status : fallbackStatus;
+      if (!map[status]) map[status] = [];
+      map[status].push({ ...task, status });
+    });
+
+    columns.forEach((column) => {
+      map[column.id].sort((a, b) => a.order - b.order);
     });
 
     return map;
-  }, [tasks]);
-
-  const todoCount = groupedTasks.todo.length;
-  const doingCount = groupedTasks.doing.length;
-  const doneCount = groupedTasks.done.length;
+  }, [tasks, columns]);
 
   const resetTaskForm = () => {
     setEditingTaskId(null);
     setTaskTitle("");
     setTaskDescription("");
     setTaskChecklist([{ text: "", done: false }]);
-    setSelectedStatus("todo");
+    setSelectedStatus(columns[0]?.id ?? "todo");
     setSelectedMemberIds(hasMemberContext ? [currentMemberId] : []);
     setShowMemberDropdown(false);
     setDeadline(new Date());
     setShowDatePicker(false);
   };
 
-  const openNewTaskModal = (status: TaskStatus = "todo") => {
+  const resetListForm = () => {
+    setEditingColumnId(null);
+    setListName("");
+  };
+
+  const openNewTaskModal = (status: string = columns[0]?.id ?? "todo") => {
     if (!canManageTasks) return;
     if (!hasGroupContext && !hasMemberContext) return;
     resetTaskForm();
@@ -705,6 +790,108 @@ export default function TaskBoard({
     }
     setShowDatePicker(false);
     setShowTaskModal(true);
+  };
+
+  const openAddListModal = () => {
+    if (!canManageTasks) return;
+    resetListForm();
+    setShowListModal(true);
+  };
+
+  const openEditListModal = (column: BoardColumn) => {
+    if (!canManageTasks) return;
+    setEditingColumnId(column.id);
+    setListName(column.label);
+    setShowListModal(true);
+  };
+
+  const saveList = async () => {
+    if (!canManageTasks) return;
+
+    const label = listName.trim();
+    if (!label) {
+      return Alert.alert("Error", "Fill list name");
+    }
+
+    if (editingColumnId) {
+      const nextColumns = columns.map((column) =>
+        column.id === editingColumnId ? { ...column, label } : column
+      );
+      await applyColumns(nextColumns);
+    } else {
+      const nextColumns = [...columns, { id: createColumnId(), label }];
+      await applyColumns(nextColumns);
+      setSelectedStatus(nextColumns[nextColumns.length - 1].id);
+    }
+
+    setShowListModal(false);
+    resetListForm();
+  };
+
+  const deleteList = async () => {
+    if (!canManageTasks) return;
+    if (!editingColumnId) return;
+    if (columns.length <= 1) {
+      Alert.alert("Error", "You need at least one list");
+      return;
+    }
+
+    const column = columns.find((item) => item.id === editingColumnId);
+    if (!column) return;
+
+    const fallbackColumn = columns.find((item) => item.id !== editingColumnId) ?? columns[0];
+    if (!fallbackColumn) return;
+
+    Alert.alert(
+      "Delete list",
+      `Remove "${column.label}"? Tasks in this list will move to "${fallbackColumn.label}".`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const batch = writeBatch(db);
+
+              const tasksToMove = tasks.filter((task) => task.status === editingColumnId);
+              tasksToMove.forEach((task, index) => {
+                batch.update(doc(db, "tasks", task.id), {
+                  status: fallbackColumn.id,
+                  order: index,
+                  updatedAt: Timestamp.now(),
+                });
+              });
+
+              const nextColumns = columns.filter((item) => item.id !== editingColumnId);
+              if (hasGroupContext && currentGroupId) {
+                batch.update(doc(db, groupCollectionName, currentGroupId), {
+                  taskColumns: nextColumns,
+                  updatedAt: Timestamp.now(),
+                });
+              }
+
+              await batch.commit();
+
+              setShowListModal(false);
+              resetListForm();
+              await loadTasks();
+            } catch {
+              Alert.alert("Error", "Failed to delete list");
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const moveColumn = async (index: number, direction: -1 | 1) => {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= columns.length) return;
+
+    const nextColumns = [...columns];
+    [nextColumns[index], nextColumns[nextIndex]] = [nextColumns[nextIndex], nextColumns[index]];
+    await applyColumns(nextColumns);
   };
 
   const updateChecklistItem = (index: number, text: string) => {
@@ -787,6 +974,10 @@ export default function TaskBoard({
       .map((id) => users.find((u) => u.id === id)?.name)
       .filter((name): name is string => Boolean(name));
 
+    const activeStatus = columns.some((column) => column.id === selectedStatus)
+      ? selectedStatus
+      : columns[0]?.id ?? "todo";
+
     setSaving(true);
     try {
       const payload = {
@@ -796,7 +987,7 @@ export default function TaskBoard({
         title,
         description,
         checklist: cleanChecklist,
-        status: selectedStatus,
+        status: activeStatus,
         deadline: deadline.toISOString().slice(0, 10),
         deadlineAt: Timestamp.fromDate(deadline),
         assignedMemberIds: activeMemberIds,
@@ -807,7 +998,7 @@ export default function TaskBoard({
       if (editingTaskId) {
         await updateDoc(doc(db, "tasks", editingTaskId), payload);
       } else {
-        const nextOrder = groupedTasks[selectedStatus].length;
+        const nextOrder = groupedTasks[activeStatus]?.length ?? 0;
 
         await addDoc(collection(db, "tasks"), {
           ...payload,
@@ -871,13 +1062,20 @@ export default function TaskBoard({
     });
   }, []);
 
+  const reorderList = (list: TaskItem[], movingTask: TaskItem, insertIndex: number) => {
+    const next = list.filter((item) => item.id !== movingTask.id);
+    const safeIndex = Math.max(0, Math.min(insertIndex, next.length));
+    next.splice(safeIndex, 0, movingTask);
+    return next;
+  };
+
   const endDrag = useCallback(
     async (x: number, y: number) => {
       const current = dragStateRef.current;
       if (!current) return;
 
       const rects = columnRectsRef.current;
-      const targetStatus = (Object.keys(rects) as TaskStatus[]).find((status) => {
+      const targetStatus = (Object.keys(rects) as string[]).find((status) => {
         const rect = rects[status];
         if (!rect) return false;
         return (
@@ -890,17 +1088,72 @@ export default function TaskBoard({
 
       setDragState(null);
 
-      if (!targetStatus || targetStatus === current.task.status) {
+      if (!targetStatus) {
+        return;
+      }
+
+      const sourceStatus = current.task.status;
+      const sourceTasks = groupedTasks[sourceStatus] ?? [];
+      const targetTasks = groupedTasks[targetStatus] ?? [];
+      const targetWithoutMoving =
+        targetStatus === sourceStatus
+          ? targetTasks.filter((task) => task.id !== current.task.id)
+          : targetTasks;
+
+      let insertIndex = targetWithoutMoving.length;
+      for (let i = 0; i < targetWithoutMoving.length; i++) {
+        const rect = cardRectsRef.current[targetWithoutMoving[i].id];
+        if (!rect) continue;
+        const midpoint = rect.y + rect.height / 2;
+        if (y < midpoint) {
+          insertIndex = i;
+          break;
+        }
+      }
+
+      const nextTargetOrder = reorderList(targetWithoutMoving, current.task, insertIndex);
+
+      const sameOrder =
+        sourceStatus === targetStatus &&
+        sourceTasks.map((task) => task.id).join("|") === nextTargetOrder.map((task) => task.id).join("|");
+
+      if (sameOrder) {
         return;
       }
 
       try {
-        const targetCount = groupedTasks[targetStatus].length;
-        await updateDoc(doc(db, "tasks", current.task.id), {
-          status: targetStatus,
-          order: targetCount,
-          updatedAt: Timestamp.now(),
-        });
+        const batch = writeBatch(db);
+        const now = Timestamp.now();
+
+        if (targetStatus === sourceStatus) {
+          nextTargetOrder.forEach((task, index) => {
+            batch.update(doc(db, "tasks", task.id), {
+              status: targetStatus,
+              order: index,
+              updatedAt: now,
+            });
+          });
+        } else {
+          const nextSourceOrder = sourceTasks.filter((task) => task.id !== current.task.id);
+
+          nextSourceOrder.forEach((task, index) => {
+            batch.update(doc(db, "tasks", task.id), {
+              status: sourceStatus,
+              order: index,
+              updatedAt: now,
+            });
+          });
+
+          nextTargetOrder.forEach((task, index) => {
+            batch.update(doc(db, "tasks", task.id), {
+              status: targetStatus,
+              order: index,
+              updatedAt: now,
+            });
+          });
+        }
+
+        await batch.commit();
         await loadTasks();
       } catch {
         Alert.alert("Error", "Failed to move task");
@@ -935,11 +1188,11 @@ export default function TaskBoard({
     [endDrag, moveDrag]
   );
 
-  const renderColumn = (status: TaskStatus, ref: React.RefObject<View>) => {
-    const data = groupedTasks[status];
+  const renderColumn = (column: BoardColumn) => {
+    const data = groupedTasks[column.id] ?? [];
     const isDropTarget = (() => {
       if (!dragState) return false;
-      const rect = columnRects[status];
+      const rect = columnRects[column.id];
       if (!rect) return false;
       const centerX = dragState.x + dragState.width / 2;
       const centerY = dragState.y + dragState.height / 2;
@@ -951,11 +1204,12 @@ export default function TaskBoard({
       );
     })();
 
-    const count = status === "todo" ? todoCount : status === "doing" ? doingCount : doneCount;
-
     return (
       <View
-        ref={ref}
+        key={column.id}
+        ref={(node) => {
+          columnRefs.current[column.id] = node;
+        }}
         collapsable={false}
         onLayout={measureColumns}
         className={`w-[300px] min-h-[500px] rounded-[24px] border p-3 ${
@@ -964,13 +1218,31 @@ export default function TaskBoard({
       >
         <View className="mb-3 flex-row items-center justify-between">
           <View className="flex-row items-center" style={{ gap: 8 }}>
-            <Text className="text-[18px] font-black text-slate-900">
-              {status === "todo" ? "To Do" : status === "doing" ? "Doing" : "Done"}
-            </Text>
+            <Text className="text-[18px] font-black text-slate-900">{column.label}</Text>
             <View className="rounded-full bg-slate-900 px-2.5 py-1">
-              <Text className="text-[11px] font-bold text-white">{count}</Text>
+              <Text className="text-[11px] font-bold text-white">{data.length}</Text>
             </View>
           </View>
+
+          {canManageTasks ? (
+            <Pressable
+              onPress={() => openEditListModal(column)}
+              className="h-9 w-9 items-center justify-center rounded-full bg-white"
+              style={({ pressed }) =>
+                pressed
+                  ? { opacity: 0.85, transform: [{ scale: 0.98 }] }
+                  : {
+                      shadowColor: "#000",
+                      shadowOpacity: 0.08,
+                      shadowRadius: 4,
+                      shadowOffset: { width: 0, height: 2 },
+                      elevation: 1,
+                    }
+              }
+            >
+              <Ionicons name="pencil-outline" size={18} color="#0f172a" />
+            </Pressable>
+          ) : null}
         </View>
 
         <ScrollView
@@ -997,10 +1269,60 @@ export default function TaskBoard({
               onStartDrag={startDrag}
               canManageTask={canManageTasks}
               showGroupMeta={!hasGroupContext}
+              onMeasure={(taskId, rect) => {
+                cardRectsRef.current[taskId] = rect;
+              }}
             />
           ))}
+
+          {canManageTasks ? (
+            <Pressable
+              onPress={() => openNewTaskModal(column.id)}
+              className="flex-row items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3"
+              style={({ pressed }) =>
+                pressed ? { opacity: 0.9, transform: [{ scale: 0.99 }] } : undefined
+              }
+            >
+              <Ionicons name="add" size={18} color="#0f172a" />
+              <Text className="ml-2 text-[13px] font-extrabold text-slate-900">
+                Add a card
+              </Text>
+            </Pressable>
+          ) : null}
         </ScrollView>
       </View>
+    );
+  };
+
+  const renderAddColumnCard = () => {
+    if (!canManageTasks) return null;
+
+    return (
+      <Pressable
+        onPress={openAddListModal}
+        className="w-[300px] min-h-[500px] items-center justify-center rounded-[24px] border border-dashed border-slate-300 bg-slate-100/80 p-3"
+        style={({ pressed }) =>
+          pressed
+            ? { opacity: 0.9, transform: [{ scale: 0.99 }] }
+            : {
+                shadowColor: "#000",
+                shadowOpacity: 0.03,
+                shadowRadius: 2,
+                shadowOffset: { width: 0, height: 1 },
+                elevation: 1,
+              }
+        }
+      >
+        <View className="items-center justify-center rounded-[24px] border border-slate-200 bg-white px-6 py-8">
+          <View className="mb-3 h-14 w-14 items-center justify-center rounded-full bg-slate-900">
+            <Ionicons name="add" size={30} color="white" />
+          </View>
+          <Text className="text-[16px] font-black text-slate-900">Add List</Text>
+          <Text className="mt-1 text-center text-[12px] font-semibold text-slate-500">
+            Create a new board column
+          </Text>
+        </View>
+      </Pressable>
     );
   };
 
@@ -1063,19 +1385,21 @@ export default function TaskBoard({
               )}
             </View>
 
-            <View
-              className={`rounded-full px-3 py-1.5 ${
-                canManageTasks ? "bg-slate-900" : "bg-slate-200"
-              }`}
+            <Pressable
+              onPress={() =>
+                router.push({
+                  pathname: "/admin/members",
+                  params: {
+                    groupId: currentGroupId,
+                    groupKind: currentGroupKind,
+                    groupName: currentGroupName,
+                  },
+                })
+              }
+              className="h-10 w-10 items-center justify-center rounded-full bg-slate-100"
             >
-              <Text
-                className={`text-[11px] font-black uppercase tracking-wider ${
-                  canManageTasks ? "text-white" : "text-slate-700"
-                }`}
-              >
-                {canManageTasks ? "Admin" : "Member"}
-              </Text>
-            </View>
+              <Ionicons name="people" size={22} color="#0f172a" />
+            </Pressable>
           </View>
         </View>
       </View>
@@ -1086,322 +1410,65 @@ export default function TaskBoard({
         nestedScrollEnabled
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 28, gap: 14 }}
       >
-        {renderColumn("todo", todoColRef)}
-        {renderColumn("doing", doingColRef)}
-        {renderColumn("done", doneColRef)}
+        {columns.map((column) => renderColumn(column))}
+        {renderAddColumnCard()}
       </ScrollView>
 
       {canManageTasks && (hasGroupContext || hasMemberContext) ? (
-        <Pressable
-          onPress={() => openNewTaskModal("todo")}
-          className="absolute bottom-5 right-5 h-[60px] w-[60px] items-center justify-center rounded-full bg-slate-900"
-          style={({ pressed }) =>
-            pressed
-              ? {
-                  opacity: 0.85,
-                  transform: [{ scale: 0.98 }],
-                  shadowOpacity: 0.25,
-                  shadowRadius: 8,
-                  shadowOffset: { width: 0, height: 4 },
-                }
-              : {
-                  shadowColor: "#000",
-                  shadowOpacity: 0.25,
-                  shadowRadius: 8,
-                  shadowOffset: { width: 0, height: 4 },
-                  elevation: 6,
-                }
-          }
-        >
-          <Ionicons name="add" size={32} color="white" />
-        </Pressable>
-      ) : null}
-
-      {canManageTasks && (hasGroupContext || hasMemberContext) ? (
-        <Modal
+        <TaskModal
           visible={showTaskModal}
-          transparent
-          animationType="slide"
-          onRequestClose={() => {
+          onClose={() => {
             setShowTaskModal(false);
             resetTaskForm();
           }}
-        >
-          <View className="flex-1 justify-end">
-            <Pressable
-              className="absolute inset-0 bg-black/45"
-              onPress={() => {
-                setShowTaskModal(false);
-                resetTaskForm();
-              }}
-            />
-            <View className="max-h-[92%] rounded-t-[28px] bg-white px-[18px] pb-[18px] pt-2">
-              <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
-              <Text className="mb-3 text-center text-[22px] font-black text-slate-900">
-                {editingTaskId ? "Edit Task" : "New Task"}
-              </Text>
+          onSave={saveTask}
+          editingTaskId={editingTaskId}
+          taskTitle={taskTitle}
+          onTaskTitleChange={setTaskTitle}
+          taskDescription={taskDescription}
+          onTaskDescriptionChange={setTaskDescription}
+          deadline={deadline}
+          onDeadlineChange={setDeadline}
+          showDatePicker={showDatePicker}
+          onShowDatePickerChange={setShowDatePicker}
+          selectedStatus={selectedStatus}
+          onStatusChange={setSelectedStatus}
+          columns={columns}
+          taskChecklist={taskChecklist}
+          onChecklistItemChange={updateChecklistItem}
+          onChecklistItemRemove={removeChecklistItem}
+          onChecklistItemAdd={() =>
+            setTaskChecklist((prev) => [...prev, { text: "", done: false }])
+          }
+          selectedMemberNames={selectedMemberNames}
+          showMemberDropdown={showMemberDropdown}
+          onMemberDropdownChange={setShowMemberDropdown}
+          eligibleUsers={eligibleUsers}
+          selectedMemberIds={selectedMemberIds}
+          onMemberToggle={toggleMember}
+          hasGroupContext={hasGroupContext}
+          hasMemberContext={hasMemberContext}
+          greetingName={greetingName}
+          saving={saving}
+          formatDateDisplay={formatDateDisplay}
+        />
+      ) : null}
 
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                nestedScrollEnabled
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ gap: 12, paddingBottom: 24 }}
-              >
-                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
-                  <Text className="text-[13px] font-extrabold text-slate-900">Title</Text>
-                  <TextInput
-                    value={taskTitle}
-                    onChangeText={setTaskTitle}
-                    placeholder="Task title"
-                    placeholderTextColor="#94a3b8"
-                    className="rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
-                  />
-                </View>
-
-                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
-                  <Text className="text-[13px] font-extrabold text-slate-900">Description</Text>
-                  <TextInput
-                    value={taskDescription}
-                    onChangeText={setTaskDescription}
-                    placeholder="Write a short description"
-                    placeholderTextColor="#94a3b8"
-                    multiline
-                    textAlignVertical="top"
-                    className="min-h-[90px] rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
-                  />
-                </View>
-
-                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
-                  <Text className="text-[13px] font-extrabold text-slate-900">Deadline</Text>
-                  <Pressable
-                    onPress={() => setShowDatePicker(true)}
-                    className="flex-row items-center rounded-[16px] border border-slate-200 bg-white px-4 py-3"
-                    style={({ pressed }) =>
-                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                    }
-                  >
-                    <Ionicons name="calendar-outline" size={18} color="#111827" />
-                    <Text className="ml-2 text-[15px] font-bold text-slate-900">
-                      {formatDateDisplay(deadline)}
-                    </Text>
-                  </Pressable>
-
-                  {showDatePicker ? (
-                    <DateTimePicker
-                      value={deadline}
-                      mode="date"
-                      display={Platform.OS === "ios" ? "spinner" : "default"}
-                      onChange={(_, selected) => {
-                        if (Platform.OS !== "ios") {
-                          setShowDatePicker(false);
-                        }
-                        if (selected) setDeadline(selected);
-                      }}
-                    />
-                  ) : null}
-                </View>
-
-                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
-                  <Text className="text-[13px] font-extrabold text-slate-900">Column</Text>
-                  <View className="flex-row flex-wrap" style={{ gap: 8 }}>
-                    {statusList.map((status) => {
-                      const active = selectedStatus === status.key;
-                      return (
-                        <Pressable
-                          key={status.key}
-                          onPress={() => setSelectedStatus(status.key)}
-                          className={`rounded-full px-3 py-2 ${
-                            active ? "bg-slate-900" : "bg-white"
-                          }`}
-                          style={({ pressed }) => [
-                            pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined,
-                            {
-                              borderWidth: 1,
-                              borderColor: active ? "#0f172a" : "#e2e8f0",
-                            },
-                          ]}
-                        >
-                          <Text
-                            className={`text-xs font-extrabold ${
-                              active ? "text-white" : "text-slate-900"
-                            }`}
-                          >
-                            {status.label}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
-
-                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
-                  <Text className="text-[13px] font-extrabold text-slate-900">Checklist</Text>
-
-                  {taskChecklist.map((item, index) => (
-                    <View key={index} className="mb-2 flex-row items-center" style={{ gap: 10 }}>
-                      <TextInput
-                        value={item.text}
-                        onChangeText={(text) => updateChecklistItem(index, text)}
-                        placeholder={`Checklist ${index + 1}`}
-                        placeholderTextColor="#94a3b8"
-                        className="flex-1 rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900"
-                      />
-                      <Pressable
-                        onPress={() => removeChecklistItem(index)}
-                        className="h-10 w-10 items-center justify-center rounded-[14px] bg-red-500"
-                        style={({ pressed }) =>
-                          pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                        }
-                      >
-                        <Ionicons name="close" size={18} color="#fff" />
-                      </Pressable>
-                    </View>
-                  ))}
-
-                  <Pressable
-                    onPress={() =>
-                      setTaskChecklist((prev) => [...prev, { text: "", done: false }])
-                    }
-                    className="self-start flex-row items-center rounded-full bg-slate-900 px-4 py-2.5"
-                    style={({ pressed }) =>
-                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                    }
-                  >
-                    <Ionicons name="add" size={16} color="#fff" />
-                    <Text className="ml-2 font-bold text-white">Add checklist item</Text>
-                  </Pressable>
-                </View>
-
-                <View className="rounded-2xl bg-slate-50 p-3" style={{ gap: 8 }}>
-                  <Text className="text-[13px] font-extrabold text-slate-900">Assign Members</Text>
-
-                  <Pressable
-                    onPress={() => setShowMemberDropdown((prev) => !prev)}
-                    className="flex-row items-center justify-between rounded-[16px] border border-slate-200 bg-white px-4 py-3"
-                    style={({ pressed }) =>
-                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                    }
-                  >
-                    <Text className="text-[15px] font-bold text-slate-900">
-                      {selectedMemberNames.length > 0
-                        ? `Selected Members (${selectedMemberNames.length})`
-                        : "Select Members"}
-                    </Text>
-                    <Ionicons
-                      name={showMemberDropdown ? "chevron-up" : "chevron-down"}
-                      size={18}
-                      color="#111827"
-                    />
-                  </Pressable>
-
-                  {selectedMemberNames.length > 0 ? (
-                    <View className="flex-row flex-wrap" style={{ gap: 6 }}>
-                      {selectedMemberNames.map((name, index) => (
-                        <View
-                          key={`${name}-${index}`}
-                          className="flex-row items-center rounded-full bg-slate-200 px-3 py-1.5"
-                          style={{ gap: 6 }}
-                        >
-                          <View className="h-4 w-4 items-center justify-center rounded-full bg-white">
-                            <Ionicons name="person" size={11} color="#64748b" />
-                          </View>
-                          <Text className="text-xs font-bold text-slate-900">{name}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  ) : null}
-
-                  {showMemberDropdown ? (
-                    hasGroupContext ? (
-                      eligibleUsers.length === 0 ? (
-                        <Text className="font-semibold text-slate-500">
-                          No eligible members found
-                        </Text>
-                      ) : (
-                        <View style={{ gap: 10 }}>
-                          {eligibleUsers.map((member) => {
-                            const checked = selectedMemberIds.includes(member.id);
-                            return (
-                              <Pressable
-                                key={member.id}
-                                onPress={() => toggleMember(member.id)}
-                                className={`flex-row items-center rounded-[16px] border p-3 ${
-                                  checked
-                                    ? "border-blue-200 bg-blue-50"
-                                    : "border-slate-200 bg-white"
-                                }`}
-                                style={({ pressed }) =>
-                                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                                }
-                              >
-                                <View className="h-8 w-8 items-center justify-center rounded-full bg-slate-100">
-                                  <Ionicons name="person" size={16} color="#64748b" />
-                                </View>
-
-                                <View
-                                  className={`mx-3 h-6 w-6 items-center justify-center rounded-full border-2 ${
-                                    checked
-                                      ? "border-slate-900 bg-slate-900"
-                                      : "border-slate-300 bg-white"
-                                  }`}
-                                >
-                                  {checked ? (
-                                    <Ionicons name="checkmark" size={15} color="#FFFFFF" />
-                                  ) : null}
-                                </View>
-
-                                <View className="flex-1">
-                                  <Text className="text-[15px] font-extrabold text-slate-900">
-                                    {member.name}
-                                  </Text>
-                                </View>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      )
-                    ) : hasMemberContext ? (
-                      <View className="rounded-[16px] bg-white px-4 py-3">
-                        <Text className="font-semibold text-slate-600">
-                          This task will be assigned to {greetingName}
-                        </Text>
-                      </View>
-                    ) : null
-                  ) : null}
-                </View>
-
-                <View className="flex-row justify-end pt-1" style={{ gap: 10 }}>
-                  <Pressable
-                    onPress={() => {
-                      setShowTaskModal(false);
-                      resetTaskForm();
-                    }}
-                    className="rounded-[16px] bg-slate-200 px-4 py-3"
-                    style={({ pressed }) =>
-                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                    }
-                  >
-                    <Text className="font-extrabold text-slate-900">Cancel</Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={saveTask}
-                    disabled={saving}
-                    className="rounded-[16px] bg-slate-900 px-4 py-3"
-                    style={({ pressed }) => [
-                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined,
-                      saving ? { opacity: 0.75 } : null,
-                    ]}
-                  >
-                    <Text className="font-extrabold text-white">
-                      {editingTaskId ? "Update" : "Create"}
-                    </Text>
-                  </Pressable>
-                </View>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
+      {canManageTasks && (hasGroupContext || hasMemberContext) ? (
+        <ListModal
+          visible={showListModal}
+          onClose={() => {
+            setShowListModal(false);
+            resetListForm();
+          }}
+          onSave={saveList}
+          editingColumnId={editingColumnId}
+          listName={listName}
+          onListNameChange={setListName}
+          columns={columns}
+          onMoveColumn={moveColumn}
+          onDeleteList={deleteList}
+        />
       ) : null}
 
       {dragState ? (
