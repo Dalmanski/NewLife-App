@@ -12,24 +12,25 @@ import {
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
+  Linking,
   PanResponder,
   Pressable,
   ScrollView,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { db } from "../lib/firebaseConfig";
-import { ListModal, TaskModal } from "./task-board-modal";
+import {
+  DeleteConfirmModal,
+  ListModal,
+  TaskActionMenuModal,
+  TaskModal,
+} from "./task-board-modal";
 
 type TaskStatus = string;
 
@@ -45,6 +46,7 @@ type TaskDoc = {
   title?: string;
   description?: string;
   checklist?: Array<string | ChecklistItem>;
+  showChecklist?: boolean;
   status?: TaskStatus;
   order?: number;
   deadline?: string;
@@ -63,6 +65,7 @@ type TaskItem = {
   title: string;
   description: string;
   checklist: ChecklistItem[];
+  showChecklist: boolean;
   status: TaskStatus;
   order: number;
   deadline: string;
@@ -119,6 +122,12 @@ type TaskBoardProps = {
   memberName?: string;
   targetMemberId?: string;
   targetMemberName?: string;
+};
+
+type MenuAnchor = {
+  taskId: string;
+  x: number;
+  y: number;
 };
 
 const defaultColumnLabels = ["To Do", "Pending", "Done"];
@@ -207,9 +216,7 @@ const normalizeColumns = (value: unknown): BoardColumn[] => {
 
     if (!id) {
       const normalized = label.toLowerCase();
-      const defaultCol = defaultColumns.find(
-        (col) => col.label.toLowerCase() === normalized
-      );
+      const defaultCol = defaultColumns.find((col) => col.label.toLowerCase() === normalized);
       id = defaultCol?.id || createColumnId();
     }
 
@@ -222,31 +229,79 @@ const normalizeColumns = (value: unknown): BoardColumn[] => {
   return next.length > 0 ? next : defaultColumns;
 };
 
+const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+
+const renderDescriptionWithLinks = (text: string, onLinkPress: (url: string) => void) => {
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  urlRegex.lastIndex = 0;
+
+  let match: RegExpExecArray | null;
+  while ((match = urlRegex.exec(text)) !== null) {
+    const url = match[0];
+    const start = match.index;
+
+    if (start > lastIndex) {
+      nodes.push(text.slice(lastIndex, start));
+    }
+
+    nodes.push(
+      <Text
+        key={`${start}-${url}`}
+        selectable={false}
+        onPress={() => onLinkPress(url)}
+        className="font-bold text-blue-600"
+        style={{
+          textDecorationLine: "underline",
+        }}
+      >
+        {url}
+      </Text>
+    );
+
+    lastIndex = start + url.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : text;
+};
+
 type TaskCardProps = {
   task: TaskItem;
-  onOpen: (task: TaskItem) => void;
   onDelete?: (taskId: string) => void;
+  onEdit: (task: TaskItem) => void;
   onToggleChecklist: (taskId: string, checklistIndex: number, nextDone: boolean) => void;
   onStartDrag: (task: TaskItem, x: number, y: number, width: number, height: number) => void;
   canManageTask: boolean;
   showGroupMeta: boolean;
   onMeasure: (taskId: string, rect: CardRect) => void;
+  onOpenMenu: (taskId: string, x: number, y: number) => void;
+  menuOpenTaskId: string | null;
 };
 
 function TaskCard({
   task,
-  onOpen,
   onDelete,
+  onEdit,
   onToggleChecklist,
   onStartDrag,
   canManageTask,
   showGroupMeta,
   onMeasure,
+  onOpenMenu,
+  menuOpenTaskId,
 }: TaskCardProps) {
   const [layout, setLayout] = useState({ width: 300, height: 120 });
-  const [showChecklist, setShowChecklist] = useState(false);
+  const [showChecklist, setShowChecklist] = useState(!!task.showChecklist);
   const suppressOpen = useRef(false);
   const cardRef = useRef<any>(null);
+
+  useEffect(() => {
+    setShowChecklist(!!task.showChecklist);
+  }, [task.showChecklist, task.id]);
 
   const blockOpenBriefly = () => {
     suppressOpen.current = true;
@@ -266,10 +321,17 @@ function TaskCard({
   const checklistDone = task.checklist.filter((x) => x.done).length;
   const checklistTotal = task.checklist.length;
   const descriptionText =
-    task.description && task.description.trim()
-      ? task.description
-      : "No description provided";
+    task.description && task.description.trim() ? task.description : "No description provided";
   const formattedDeadline = formatDeadlineText(task.deadline, task.deadlineAt);
+
+  const openUrl = async (url: string) => {
+    const normalized = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    try {
+      await Linking.openURL(normalized);
+    } catch {
+      Alert.alert("Error", "Unable to open link");
+    }
+  };
 
   return (
     <Pressable
@@ -281,11 +343,9 @@ function TaskCard({
         });
         measureCard();
       }}
-      onPress={() => {
-        if (!suppressOpen.current && canManageTask) onOpen(task);
-      }}
       onLongPress={(evt) => {
         blockOpenBriefly();
+        onOpenMenu(task.id, evt.nativeEvent.pageX, evt.nativeEvent.pageY);
         onStartDrag(
           task,
           evt.nativeEvent.pageX,
@@ -297,78 +357,81 @@ function TaskCard({
       delayLongPress={500}
       className="rounded-[22px] border border-slate-200 bg-white p-4"
       style={{
+        position: "relative",
+        overflow: "visible",
+        zIndex: menuOpenTaskId === task.id ? 999 : 1,
         gap: 12,
         shadowColor: "#0f172a",
         shadowOpacity: 0.06,
         shadowRadius: 16,
         shadowOffset: { width: 0, height: 8 },
-        elevation: 2,
+        elevation: menuOpenTaskId === task.id ? 10 : 2,
+        cursor: "default",
       }}
     >
       <View className="flex-row items-start justify-between gap-2">
         <View className="flex-1" style={{ gap: 6 }}>
-          <Text className="text-[16px] font-extrabold leading-5 text-slate-900">
+          <Text selectable={false} className="text-[16px] font-extrabold leading-5 text-slate-900">
             {task.title}
           </Text>
 
           {showGroupMeta ? (
             <View className="self-start rounded-full bg-slate-100 px-2.5 py-1">
-              <Text className="text-[11px] font-bold text-slate-500">
+              <Text selectable={false} className="text-[11px] font-bold text-slate-500">
                 {task.groupName || "Group"}
               </Text>
             </View>
           ) : null}
         </View>
 
-        {canManageTask && onDelete ? (
-          <Pressable
-            onPressIn={blockOpenBriefly}
-            onPress={() => onDelete(task.id)}
-            className="h-8 w-8 items-center justify-center rounded-full bg-red-50"
-            hitSlop={8}
-          >
-            <Ionicons name="trash-outline" size={18} color="#b91c1c" />
-          </Pressable>
+        {canManageTask ? (
+          <View style={{ position: "relative", zIndex: 1000 }}>
+            <Pressable
+              onPressIn={blockOpenBriefly}
+              onPress={(evt) => onOpenMenu(task.id, evt.nativeEvent.pageX, evt.nativeEvent.pageY)}
+              className="h-8 w-8 items-center justify-center rounded-full bg-slate-100"
+              hitSlop={8}
+              style={{
+                zIndex: 1000,
+              }}
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color="#0f172a" />
+            </Pressable>
+          </View>
         ) : null}
       </View>
 
-      <Text className="text-[13px] leading-[19px] text-slate-600">{descriptionText}</Text>
+      <Text selectable={false} className="text-[13px] leading-[19px] text-slate-600">
+        {renderDescriptionWithLinks(descriptionText, openUrl)}
+      </Text>
 
       <View style={{ gap: 10 }}>
         <View className="flex-row items-center justify-between">
           <View className="flex-row items-center" style={{ gap: 8 }}>
-            <View className="rounded-full bg-slate-100 px-2.5 py-1">
-              <Text className="text-[11px] font-bold text-slate-600">
+            <Pressable
+              onPressIn={blockOpenBriefly}
+              onPress={() => setShowChecklist((prev) => !prev)}
+              className="rounded-full bg-slate-100 px-2.5 py-1"
+              style={({ pressed }) => (pressed ? { opacity: 0.8 } : undefined)}
+            >
+              <Text selectable={false} className="text-[11px] font-bold text-slate-600">
                 Checklist {checklistDone}/{checklistTotal}
               </Text>
-            </View>
-
-            {checklistTotal > 0 ? (
-              <Pressable
-                onPressIn={blockOpenBriefly}
-                onPress={() => setShowChecklist((prev) => !prev)}
-                className="h-8 w-8 items-center justify-center rounded-full bg-slate-100"
-                hitSlop={8}
-              >
-                <Ionicons
-                  name={showChecklist ? "chevron-up" : "chevron-down"}
-                  size={18}
-                  color="#0f172a"
-                />
-              </Pressable>
-            ) : null}
+            </Pressable>
           </View>
 
           <View className="flex-row items-center" style={{ gap: 8 }}>
             {formattedDeadline ? (
               <View className="rounded-full bg-amber-50 px-2.5 py-1">
-                <Text className="text-[11px] font-bold text-amber-700">
+                <Text selectable={false} className="text-[11px] font-bold text-amber-700">
                   Due {formattedDeadline}
                 </Text>
               </View>
             ) : (
               <View className="rounded-full bg-slate-100 px-2.5 py-1">
-                <Text className="text-[11px] font-bold text-slate-500">No deadline</Text>
+                <Text selectable={false} className="text-[11px] font-bold text-slate-500">
+                  No deadline
+                </Text>
               </View>
             )}
           </View>
@@ -388,17 +451,14 @@ function TaskCard({
               >
                 <View
                   className={`mr-3 h-6 w-6 items-center justify-center rounded-full border-2 ${
-                    item.done
-                      ? "border-slate-900 bg-slate-900"
-                      : "border-slate-300 bg-white"
+                    item.done ? "border-slate-900 bg-slate-900" : "border-slate-300 bg-white"
                   }`}
                 >
-                  {item.done ? (
-                    <Ionicons name="checkmark" size={15} color="#FFFFFF" />
-                  ) : null}
+                  {item.done ? <Ionicons name="checkmark" size={15} color="#FFFFFF" /> : null}
                 </View>
 
                 <Text
+                  selectable={false}
                   className={`flex-1 text-[13px] leading-[18px] ${
                     item.done ? "text-slate-400 line-through" : "text-slate-900"
                   }`}
@@ -422,11 +482,13 @@ function TaskCard({
               <View className="h-[18px] w-[18px] items-center justify-center rounded-full bg-white">
                 <Ionicons name="person" size={12} color="#64748b" />
               </View>
-              <Text className="text-xs font-bold text-slate-800">{name}</Text>
+              <Text selectable={false} className="text-xs font-bold text-slate-800">
+                {name}
+              </Text>
             </View>
           ))}
           {task.assignedMemberNames.length > 3 ? (
-            <Text className="text-xs font-bold text-slate-500">
+            <Text selectable={false} className="text-xs font-bold text-slate-500">
               +{task.assignedMemberNames.length - 3}
             </Text>
           ) : null}
@@ -444,6 +506,8 @@ export default function TaskBoard({
   targetMemberName,
 }: TaskBoardProps) {
   const router = useRouter();
+  const { width: screenWidth } = useWindowDimensions();
+
   const params = useLocalSearchParams<{
     groupId?: string;
     groupName?: string;
@@ -495,6 +559,7 @@ export default function TaskBoard({
   const [taskChecklist, setTaskChecklist] = useState<ChecklistItem[]>([
     { text: "", done: false },
   ]);
+  const [showChecklist, setShowChecklist] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string>(defaultColumns[0].id);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
@@ -503,6 +568,9 @@ export default function TaskBoard({
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [columnRects, setColumnRects] = useState<Record<string, ColumnRect | null>>({});
   const [role, setRole] = useState(initialRole);
+  const [activeMenuTaskId, setActiveMenuTaskId] = useState<string | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
+  const [deleteConfirmTaskId, setDeleteConfirmTaskId] = useState<string | null>(null);
 
   const dragStateRef = useRef<DragState | null>(null);
   const columnRectsRef = useRef<Record<string, ColumnRect | null>>({});
@@ -546,6 +614,16 @@ export default function TaskBoard({
 
   const effectiveRole = normalizeRole(role || initialRole);
   const canManageTasks = isAdminRole(effectiveRole);
+
+  const closeMenu = useCallback(() => {
+    setActiveMenuTaskId(null);
+    setMenuAnchor(null);
+  }, []);
+
+  const openTaskMenu = useCallback((taskId: string, x: number, y: number) => {
+    setActiveMenuTaskId(taskId);
+    setMenuAnchor({ taskId, x, y });
+  }, []);
 
   const applyColumns = useCallback(
     async (nextColumns: BoardColumn[]) => {
@@ -632,6 +710,7 @@ export default function TaskBoard({
       const list: TaskItem[] = taskSnap.docs
         .map((d) => {
           const data = d.data() as TaskDoc;
+          const normalizedChecklist = normalizeChecklist(data.checklist);
           return {
             id: d.id,
             groupId: String(data.groupId ?? ""),
@@ -639,7 +718,11 @@ export default function TaskBoard({
             groupKind: String(data.groupKind ?? ""),
             title: String(data.title ?? "").trim(),
             description: String(data.description ?? "").trim(),
-            checklist: normalizeChecklist(data.checklist),
+            checklist: normalizedChecklist,
+            showChecklist:
+              typeof data.showChecklist === "boolean"
+                ? data.showChecklist
+                : normalizedChecklist.length > 0,
             status: (() => {
               const st = String(data.status ?? "").trim().toLowerCase();
               return st || "todo";
@@ -745,6 +828,7 @@ export default function TaskBoard({
     setTaskTitle("");
     setTaskDescription("");
     setTaskChecklist([{ text: "", done: false }]);
+    setShowChecklist(false);
     setSelectedStatus(columns[0]?.id ?? "todo");
     setSelectedMemberIds(hasMemberContext ? [currentMemberId] : []);
     setShowMemberDropdown(false);
@@ -762,6 +846,7 @@ export default function TaskBoard({
     if (!hasGroupContext && !hasMemberContext) return;
     resetTaskForm();
     setSelectedStatus(status);
+    setShowChecklist(false);
     if (hasMemberContext && currentMemberId) {
       setSelectedMemberIds([currentMemberId]);
     }
@@ -776,6 +861,7 @@ export default function TaskBoard({
     setTaskChecklist(
       task.checklist.length > 0 ? task.checklist : [{ text: "", done: false }]
     );
+    setShowChecklist(!!task.showChecklist);
     setSelectedStatus(task.status);
     setSelectedMemberIds(task.assignedMemberIds ?? []);
     setShowMemberDropdown(false);
@@ -911,9 +997,7 @@ export default function TaskBoard({
 
   const toggleMember = (memberId: string) => {
     setSelectedMemberIds((prev) =>
-      prev.includes(memberId)
-        ? prev.filter((id) => id !== memberId)
-        : [...prev, memberId]
+      prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
     );
   };
 
@@ -987,6 +1071,7 @@ export default function TaskBoard({
         title,
         description,
         checklist: cleanChecklist,
+        showChecklist,
         status: activeStatus,
         deadline: deadline.toISOString().slice(0, 10),
         deadlineAt: Timestamp.fromDate(deadline),
@@ -1018,28 +1103,18 @@ export default function TaskBoard({
   };
 
   const deleteTask = async (taskId: string) => {
-    if (!canManageTasks) return;
-
-    Alert.alert("Delete task", "Remove this task?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await deleteDoc(doc(db, "tasks", taskId));
-            await loadTasks();
-          } catch {
-            Alert.alert("Error", "Failed to delete task");
-          }
-        },
-      },
-    ]);
+    try {
+      await deleteDoc(doc(db, "tasks", taskId));
+      await loadTasks();
+    } catch {
+      Alert.alert("Error", "Failed to delete task");
+    }
   };
 
   const startDrag = useCallback(
     (task: TaskItem, x: number, y: number, width: number, height: number) => {
       measureColumns();
+      closeMenu();
       setDragState({
         task,
         x: x - width / 2,
@@ -1048,7 +1123,7 @@ export default function TaskBoard({
         height,
       });
     },
-    [measureColumns]
+    [closeMenu, measureColumns]
   );
 
   const moveDrag = useCallback((x: number, y: number) => {
@@ -1115,7 +1190,8 @@ export default function TaskBoard({
 
       const sameOrder =
         sourceStatus === targetStatus &&
-        sourceTasks.map((task) => task.id).join("|") === nextTargetOrder.map((task) => task.id).join("|");
+        sourceTasks.map((task) => task.id).join("|") ===
+          nextTargetOrder.map((task) => task.id).join("|");
 
       if (sameOrder) {
         return;
@@ -1215,12 +1291,19 @@ export default function TaskBoard({
         className={`w-[300px] min-h-[500px] rounded-[24px] border p-3 ${
           isDropTarget ? "border-slate-900 bg-slate-100" : "border-slate-200 bg-slate-100/80"
         }`}
+        style={{
+          overflow: "visible",
+        }}
       >
         <View className="mb-3 flex-row items-center justify-between">
           <View className="flex-row items-center" style={{ gap: 8 }}>
-            <Text className="text-[18px] font-black text-slate-900">{column.label}</Text>
+            <Text selectable={false} className="text-[18px] font-black text-slate-900">
+              {column.label}
+            </Text>
             <View className="rounded-full bg-slate-900 px-2.5 py-1">
-              <Text className="text-[11px] font-bold text-white">{data.length}</Text>
+              <Text selectable={false} className="text-[11px] font-bold text-white">
+                {data.length}
+              </Text>
             </View>
           </View>
 
@@ -1248,6 +1331,7 @@ export default function TaskBoard({
         <ScrollView
           showsVerticalScrollIndicator={false}
           nestedScrollEnabled
+          onScrollBeginDrag={() => closeMenu()}
           contentContainerStyle={{ gap: 12, paddingBottom: 20 }}
         >
           {data.length === 0 ? (
@@ -1255,7 +1339,9 @@ export default function TaskBoard({
               <View className="mb-2 h-11 w-11 items-center justify-center rounded-full bg-slate-100">
                 <Ionicons name="file-tray-outline" size={20} color="#94a3b8" />
               </View>
-              <Text className="text-[13px] font-bold text-slate-500">No tasks yet</Text>
+              <Text selectable={false} className="text-[13px] font-bold text-slate-500">
+                No tasks yet
+              </Text>
             </View>
           ) : null}
 
@@ -1263,8 +1349,11 @@ export default function TaskBoard({
             <TaskCard
               key={item.id}
               task={item}
-              onOpen={openEditTaskModal}
-              onDelete={canManageTasks ? deleteTask : undefined}
+              onEdit={openEditTaskModal}
+              onDelete={(taskId) => {
+                closeMenu();
+                setDeleteConfirmTaskId(taskId);
+              }}
               onToggleChecklist={toggleChecklist}
               onStartDrag={startDrag}
               canManageTask={canManageTasks}
@@ -1272,6 +1361,8 @@ export default function TaskBoard({
               onMeasure={(taskId, rect) => {
                 cardRectsRef.current[taskId] = rect;
               }}
+              onOpenMenu={openTaskMenu}
+              menuOpenTaskId={activeMenuTaskId}
             />
           ))}
 
@@ -1284,7 +1375,7 @@ export default function TaskBoard({
               }
             >
               <Ionicons name="add" size={18} color="#0f172a" />
-              <Text className="ml-2 text-[13px] font-extrabold text-slate-900">
+              <Text selectable={false} className="ml-2 text-[13px] font-extrabold text-slate-900">
                 Add a card
               </Text>
             </Pressable>
@@ -1317,8 +1408,10 @@ export default function TaskBoard({
           <View className="mb-3 h-14 w-14 items-center justify-center rounded-full bg-slate-900">
             <Ionicons name="add" size={30} color="white" />
           </View>
-          <Text className="text-[16px] font-black text-slate-900">Add List</Text>
-          <Text className="mt-1 text-center text-[12px] font-semibold text-slate-500">
+          <Text selectable={false} className="text-[16px] font-black text-slate-900">
+            Add List
+          </Text>
+          <Text selectable={false} className="mt-1 text-center text-[12px] font-semibold text-slate-500">
             Create a new board column
           </Text>
         </View>
@@ -1326,10 +1419,35 @@ export default function TaskBoard({
     );
   };
 
+  const menuWidth = 176;
+  const menuLeft = menuAnchor
+    ? Math.max(12, Math.min(menuAnchor.x - menuWidth + 18, screenWidth - menuWidth - 12))
+    : 0;
+  const menuTop = menuAnchor ? Math.max(12, menuAnchor.y + 10) : 0;
+
+  const selectedMemberNames = selectedMemberIds
+    .map((id) => users.find((u) => u.id === id)?.name)
+    .filter((name): name is string => Boolean(name));
+
+  const greetingName = currentMemberName || "Member";
+
+  const taskToDelete = deleteConfirmTaskId
+    ? tasks.find((task) => task.id === deleteConfirmTaskId)
+    : null;
+
+  const confirmDeleteTask = async () => {
+    if (!deleteConfirmTaskId) return;
+    const deletingId = deleteConfirmTaskId;
+    setDeleteConfirmTaskId(null);
+    await deleteTask(deletingId);
+  };
+
   if (loading) {
     return (
       <View className="flex-1 items-center justify-center bg-slate-50">
-        <Text className="text-base font-semibold text-slate-900">Loading...</Text>
+        <Text selectable={false} className="text-base font-semibold text-slate-900">
+          Loading...
+        </Text>
       </View>
     );
   }
@@ -1337,7 +1455,9 @@ export default function TaskBoard({
   if (hasGroupContext && (!currentGroupId || !currentGroupName)) {
     return (
       <View className="flex-1 items-center justify-center bg-slate-50">
-        <Text className="text-base font-semibold text-slate-900">Missing group</Text>
+        <Text selectable={false} className="text-base font-semibold text-slate-900">
+          Missing group
+        </Text>
       </View>
     );
   }
@@ -1345,16 +1465,12 @@ export default function TaskBoard({
   if (hasMemberContext && !currentMemberId) {
     return (
       <View className="flex-1 items-center justify-center bg-slate-50">
-        <Text className="text-base font-semibold text-slate-900">Missing member</Text>
+        <Text selectable={false} className="text-base font-semibold text-slate-900">
+          Missing member
+        </Text>
       </View>
     );
   }
-
-  const selectedMemberNames = selectedMemberIds
-    .map((id) => users.find((u) => u.id === id)?.name)
-    .filter((name): name is string => Boolean(name));
-
-  const greetingName = currentMemberName || "Member";
 
   return (
     <View className="flex-1 bg-slate-50 pt-2" {...boardResponder.panHandlers}>
@@ -1364,10 +1480,10 @@ export default function TaskBoard({
             <View className="flex-1">
               {hasGroupContext ? (
                 <>
-                  <Text className="text-[28px] font-black leading-[34px] text-slate-900">
+                  <Text selectable={false} className="text-[28px] font-black leading-[34px] text-slate-900">
                     {groupInfo.name || currentGroupName}
                   </Text>
-                  <Text className="mt-1 text-sm font-semibold leading-5 text-slate-500">
+                  <Text selectable={false} className="mt-1 text-sm font-semibold leading-5 text-slate-500">
                     {groupInfo.description?.trim()
                       ? groupInfo.description
                       : "No description provided"}
@@ -1375,10 +1491,10 @@ export default function TaskBoard({
                 </>
               ) : (
                 <>
-                  <Text className="text-[28px] font-black leading-[34px] text-slate-900">
+                  <Text selectable={false} className="text-[28px] font-black leading-[34px] text-slate-900">
                     Tasks for {greetingName}
                   </Text>
-                  <Text className="mt-1 text-sm font-semibold leading-5 text-slate-500">
+                  <Text selectable={false} className="mt-1 text-sm font-semibold leading-5 text-slate-500">
                     Admin tasks assigned to this member
                   </Text>
                 </>
@@ -1396,9 +1512,13 @@ export default function TaskBoard({
                   },
                 })
               }
-              className="h-10 w-10 items-center justify-center rounded-full bg-slate-100"
+              className="h-10 flex-row items-center rounded-full bg-slate-100 px-3"
+              style={({ pressed }) => (pressed ? { opacity: 0.85 } : undefined)}
             >
-              <Ionicons name="people" size={22} color="#0f172a" />
+              <Ionicons name="people" size={20} color="#0f172a" />
+              <Text selectable={false} className="ml-2 text-[12px] font-bold text-slate-900">
+                View Board Member
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -1408,6 +1528,7 @@ export default function TaskBoard({
         horizontal
         showsHorizontalScrollIndicator={false}
         nestedScrollEnabled
+        onScrollBeginDrag={() => closeMenu()}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 28, gap: 14 }}
       >
         {columns.map((column) => renderColumn(column))}
@@ -1434,6 +1555,8 @@ export default function TaskBoard({
           selectedStatus={selectedStatus}
           onStatusChange={setSelectedStatus}
           columns={columns}
+          showChecklist={showChecklist}
+          onChecklistToggle={setShowChecklist}
           taskChecklist={taskChecklist}
           onChecklistItemChange={updateChecklistItem}
           onChecklistItemRemove={removeChecklistItem}
@@ -1471,6 +1594,29 @@ export default function TaskBoard({
         />
       ) : null}
 
+      <TaskActionMenuModal
+        visible={!!menuAnchor}
+        x={menuLeft}
+        y={menuTop}
+        onClose={closeMenu}
+        onEdit={() => {
+          if (!menuAnchor) return;
+          const task = tasks.find((t) => t.id === menuAnchor.taskId);
+          if (task) openEditTaskModal(task);
+        }}
+        onDelete={() => {
+          if (!menuAnchor) return;
+          setDeleteConfirmTaskId(menuAnchor.taskId);
+        }}
+      />
+
+      <DeleteConfirmModal
+        visible={!!deleteConfirmTaskId}
+        taskTitle={taskToDelete?.title ?? ""}
+        onCancel={() => setDeleteConfirmTaskId(null)}
+        onConfirm={confirmDeleteTask}
+      />
+
       {dragState ? (
         <Animated.View
           pointerEvents="none"
@@ -1494,10 +1640,10 @@ export default function TaskBoard({
               elevation: 12,
             }}
           >
-            <Text className="text-base font-extrabold text-slate-900">
+            <Text selectable={false} className="text-base font-extrabold text-slate-900">
               {dragState.task.title}
             </Text>
-            <Text className="text-[13px] leading-[18px] text-slate-600">
+            <Text selectable={false} className="text-[13px] leading-[18px] text-slate-600">
               {dragState.task.description || "No description provided"}
             </Text>
           </View>

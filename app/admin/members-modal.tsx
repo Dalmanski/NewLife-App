@@ -9,6 +9,12 @@ type UserOption = {
   joinedText: string;
 };
 
+type MemberCard = {
+  id: string;
+  name: string;
+  registered: boolean;
+};
+
 type SubgroupItem = {
   id: string;
   name: string;
@@ -29,10 +35,11 @@ type GroupItem = {
   createdAt?: any;
   isActive?: boolean;
   kind: "ministry" | "coreGroup";
+  members: MemberCard[];
   subgroups: SubgroupItem[];
 };
 
-type PickerMode = "newSubgroupLeader" | "newSubgroupMembers" | "existingSubgroupMembers";
+type PickerMode = "newSubgroupLeader" | "newSubgroupMembers" | "existingSubgroupMembers" | "directMembers";
 
 type NewSubgroupModalProps = {
   visible: boolean;
@@ -64,17 +71,25 @@ export function NewSubgroupModal({
   if (!group) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      hardwareAccelerated
+      onRequestClose={onClose}
+    >
       <View className="flex-1 items-center justify-center bg-black/45 px-5">
         <Pressable className="absolute inset-0" onPress={onClose} />
-        <View className="w-full max-w-[520px] max-h-[86%] overflow-hidden rounded-[28px] bg-white shadow-lg">
+        <View className="w-full max-w-[520px] max-h-[86%] overflow-hidden rounded-[28px] bg-white shadow-lg z-[10000] elevation-20">
           <View className="bg-gray-900 px-5 py-4">
             <View className="flex-row items-center gap-3">
               <View className="h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
                 <Ionicons name="people" size={22} color="white" />
               </View>
               <View className="flex-1">
-                <Text className="text-[18px] font-extrabold text-white">Add Subgroup</Text>
+                <Text className="text-[18px] font-extrabold text-white">Add Group</Text>
                 <Text className="mt-0.5 text-[13px] font-semibold text-white/70">
                   {`Group ${indexToLetters(group.subgroups.length)}`}
                 </Text>
@@ -129,9 +144,7 @@ export function NewSubgroupModal({
                     newSubgroupMemberIds.length > 0 ? "text-gray-900" : "text-gray-400"
                   }`}
                 >
-                  {newSubgroupMemberIds.length > 0
-                    ? `${newSubgroupMemberIds.length} selected`
-                    : "Select members"}
+                  {newSubgroupMemberIds.length > 0 ? `${newSubgroupMemberIds.length} selected` : "Select members"}
                 </Text>
                 <Ionicons name="chevron-down" size={18} color="#6B7280" />
               </Pressable>
@@ -206,17 +219,25 @@ export function AddMembersModal({
   onEditLeaderClick,
 }: AddMembersModalProps) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      hardwareAccelerated
+      onRequestClose={onClose}
+    >
       <View className="flex-1 items-center justify-center bg-black/45 px-5">
         <Pressable className="absolute inset-0" onPress={onClose} />
-        <View className="w-full max-w-[520px] max-h-[86%] overflow-hidden rounded-[28px] bg-white shadow-lg">
+        <View className="w-full max-w-[520px] max-h-[86%] overflow-hidden rounded-[28px] bg-white shadow-lg z-[10000] elevation-20">
           <View className="bg-gray-900 px-5 py-4">
             <View className="flex-row items-center gap-3">
               <View className="h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
                 <Ionicons name="person-add" size={22} color="white" />
               </View>
               <View className="flex-1">
-                <Text className="text-[18px] font-extrabold text-white">Manage Members</Text>
+                <Text className="text-[18px] font-extrabold text-white">Manage Group</Text>
                 <Text className="mt-0.5 text-[13px] font-semibold text-white/70">
                   {activeSubgroup?.name ?? "Subgroup"}
                 </Text>
@@ -266,9 +287,7 @@ export function AddMembersModal({
                     memberSelectionIds.length > 0 ? "text-gray-900" : "text-gray-400"
                   }`}
                 >
-                  {memberSelectionIds.length > 0
-                    ? `${memberSelectionIds.length} selected`
-                    : "Select members"}
+                  {memberSelectionIds.length > 0 ? `${memberSelectionIds.length} selected` : "Select members"}
                 </Text>
                 <Ionicons name="chevron-down" size={18} color="#6B7280" />
               </Pressable>
@@ -286,6 +305,123 @@ export function AddMembersModal({
                       <Text className="max-w-[150px] text-[13px] font-bold text-gray-900" numberOfLines={1}>
                         {userMap.get(memberId)?.name ?? "Unnamed"}
                       </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+
+            <View className="flex-row items-center justify-end gap-2.5 pt-1">
+              <Pressable onPress={onClose} className="rounded-[14px] bg-gray-200 px-4 py-3">
+                <Text className="font-extrabold text-gray-900">Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={onSave}
+                disabled={savingAction}
+                className={`rounded-[14px] bg-gray-900 px-4 py-3 ${savingAction ? "opacity-75" : ""}`}
+              >
+                <Text className="font-extrabold text-white">{savingAction ? "Saving..." : "Save"}</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+type AddDirectMembersModalProps = {
+  visible: boolean;
+  onClose: () => void;
+  onSave: () => Promise<void>;
+  group: GroupItem | null;
+  directMemberIds: string[];
+  userMap: Map<string, UserOption>;
+  onOpenUserPicker: (mode: PickerMode) => void;
+  savingAction: boolean;
+};
+
+export function AddDirectMembersModal({
+  visible,
+  onClose,
+  onSave,
+  group,
+  directMemberIds,
+  userMap,
+  onOpenUserPicker,
+  savingAction,
+}: AddDirectMembersModalProps) {
+  if (!group) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      hardwareAccelerated
+      onRequestClose={onClose}
+    >
+      <View className="flex-1 items-center justify-center bg-black/45 px-5">
+        <Pressable className="absolute inset-0" onPress={onClose} />
+        <View className="w-full max-w-[520px] max-h-[86%] overflow-hidden rounded-[28px] bg-white shadow-lg z-[10000] elevation-20">
+          <View className="bg-gray-900 px-5 py-4">
+            <View className="flex-row items-center gap-3">
+              <View className="h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
+                <Ionicons name="people-outline" size={22} color="white" />
+              </View>
+              <View className="flex-1">
+                <Text className="text-[18px] font-extrabold text-white">Add Members</Text>
+                <Text className="mt-0.5 text-[13px] font-semibold text-white/70">{group.name}</Text>
+              </View>
+              <Pressable
+                onPress={onClose}
+                className="h-10 w-10 items-center justify-center rounded-full bg-white/10"
+              >
+                <Ionicons name="close" size={22} color="white" />
+              </Pressable>
+            </View>
+          </View>
+
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerClassName="px-5 py-5 gap-4"
+          >
+            <View className="rounded-[20px] border border-gray-200 bg-white p-4">
+              <Text className="text-[13px] font-extrabold text-gray-500">Members</Text>
+
+              <Pressable
+                onPress={() => onOpenUserPicker("directMembers")}
+                className="mt-3 flex-row items-center justify-between gap-2 rounded-[16px] border border-gray-200 bg-gray-50 px-4 py-3"
+              >
+                <Text
+                  className={`flex-1 text-[15px] font-semibold ${
+                    directMemberIds.length > 0 ? "text-gray-900" : "text-gray-400"
+                  }`}
+                >
+                  {directMemberIds.length > 0 ? `${directMemberIds.length} selected` : "Select members"}
+                </Text>
+                <Ionicons name="chevron-down" size={18} color="#6B7280" />
+              </Pressable>
+
+              {directMemberIds.length > 0 ? (
+                <View className="mt-3 gap-2">
+                  {directMemberIds.map((memberId) => (
+                    <View
+                      key={memberId}
+                      className="flex-row items-center gap-3 rounded-[14px] border border-gray-200 bg-[#FAFAFA] px-3 py-2.5"
+                    >
+                      <View className="h-8 w-8 items-center justify-center rounded-full bg-gray-200">
+                        <Ionicons name="person" size={16} color="#6B7280" />
+                      </View>
+                      <View className="flex-1">
+                        <Text className="text-[14px] font-bold text-gray-900">
+                          {userMap.get(memberId)?.name ?? "Unnamed"}
+                        </Text>
+                      </View>
                     </View>
                   ))}
                 </View>
@@ -342,14 +478,26 @@ export function UserPickerModal({
   pickerSelectedUsers,
 }: UserPickerModalProps) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      hardwareAccelerated
+      onRequestClose={onClose}
+    >
       <View className="flex-1 items-center justify-center bg-black/45 px-5">
         <Pressable className="absolute inset-0" onPress={onClose} />
-        <View className="w-full max-w-[560px] max-h-[88%] overflow-hidden rounded-[28px] bg-white shadow-lg">
+        <View className="w-full max-w-[560px] max-h-[88%] overflow-hidden rounded-[28px] bg-white shadow-lg z-[999999] elevation-30">
           <View className="bg-gray-900 px-5 py-4">
             <View className="flex-row items-center gap-3">
               <View className="h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
-                <Ionicons name={pickerMode === "newSubgroupLeader" ? "person" : "people"} size={22} color="white" />
+                <Ionicons
+                  name={pickerMode === "newSubgroupLeader" ? "person" : "people"}
+                  size={22}
+                  color="white"
+                />
               </View>
               <View className="flex-1">
                 <Text className="text-[18px] font-extrabold text-white">{selectedPickerTitle}</Text>
@@ -483,6 +631,70 @@ export function UserPickerModal({
   );
 }
 
+type DeleteConfirmModalProps = {
+  visible: boolean;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+  subgroupName?: string;
+  savingAction: boolean;
+};
+
+export function DeleteConfirmModal({
+  visible,
+  onClose,
+  onConfirm,
+  subgroupName,
+  savingAction,
+}: DeleteConfirmModalProps) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable onPress={onClose} className="flex-1 items-center justify-center bg-black/40">
+        <View className="w-[90%] max-w-[380px] overflow-hidden rounded-[24px] bg-white shadow-xl">
+          {/* Header */}
+          <View className="border-b border-gray-200 bg-red-50 px-6 py-5">
+            <View className="flex-row items-center gap-3">
+              <View className="h-12 w-12 items-center justify-center rounded-full bg-red-100">
+                <Ionicons name="trash" size={24} color="#DC2626" />
+              </View>
+              <View className="flex-1">
+                <Text className="text-[18px] font-extrabold text-gray-900">Delete Group</Text>
+                <Text className="mt-0.5 text-[13px] font-semibold text-gray-600">{subgroupName}</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Content */}
+          <View className="px-6 py-5">
+            <Text className="text-[15px] font-medium text-gray-700">
+              Are you sure you want to delete this group? This action cannot be undone.
+            </Text>
+          </View>
+
+          {/* Footer */}
+          <View className="border-t border-gray-200 flex-row gap-3 px-6 py-4">
+            <Pressable
+              onPress={onClose}
+              className="flex-1 items-center justify-center rounded-[12px] border border-gray-300 bg-white py-3"
+            >
+              <Text className="text-[15px] font-semibold text-gray-900">Cancel</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={onConfirm}
+              disabled={savingAction}
+              className={`flex-1 items-center justify-center rounded-[12px] bg-red-600 py-3 ${savingAction ? "opacity-75" : ""}`}
+            >
+              <Text className="text-[15px] font-semibold text-white">
+                {savingAction ? "Deleting..." : "Delete"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Pressable>
+    </Modal>
+  );
+}
+
 type EditGroupModalProps = {
   visible: boolean;
   onClose: () => void;
@@ -517,10 +729,18 @@ export function EditGroupModal({
   if (!group) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      hardwareAccelerated
+      onRequestClose={onClose}
+    >
       <View className="flex-1 items-center justify-center bg-black/45 px-5">
         <Pressable className="absolute inset-0" onPress={onClose} />
-        <View className="w-full max-w-[520px] max-h-[86%] overflow-hidden rounded-[28px] bg-white shadow-lg">
+        <View className="w-full max-w-[520px] max-h-[86%] overflow-hidden rounded-[28px] bg-white shadow-lg z-[10000] elevation-20">
           <View className="bg-gray-900 px-5 py-4">
             <View className="flex-row items-center gap-3">
               <View className="h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
@@ -528,9 +748,7 @@ export function EditGroupModal({
               </View>
               <View className="flex-1">
                 <Text className="text-[18px] font-extrabold text-white">Edit Group</Text>
-                <Text className="mt-0.5 text-[13px] font-semibold text-white/70">
-                  {group.name}
-                </Text>
+                <Text className="mt-0.5 text-[13px] font-semibold text-white/70">{group.name}</Text>
               </View>
               <Pressable
                 onPress={onClose}
@@ -584,11 +802,6 @@ export function EditGroupModal({
                   >
                     {editLeaderId ? userMap.get(editLeaderId)?.name ?? "Select leader" : "Select leader"}
                   </Text>
-                  {!!selectedEditLeader && (
-                    <Text className="mt-1 text-[12px] font-semibold text-gray-500">
-                      {selectedEditLeader.role || "No role"}
-                    </Text>
-                  )}
                 </View>
                 <Ionicons name="chevron-down" size={18} color="#6B7280" />
               </Pressable>
@@ -614,4 +827,11 @@ export function EditGroupModal({
   );
 }
 
-export default { NewSubgroupModal, AddMembersModal, UserPickerModal, EditGroupModal };
+export default {
+  NewSubgroupModal,
+  AddMembersModal,
+  UserPickerModal,
+  EditGroupModal,
+  AddDirectMembersModal,
+  DeleteConfirmModal,
+};

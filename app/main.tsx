@@ -2,17 +2,19 @@ import { MaterialIcons } from "@expo/vector-icons";
 import * as NavigationBar from "expo-navigation-bar";
 import { useLocalSearchParams } from "expo-router";
 import { doc, getDoc } from "firebase/firestore";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useColorScheme } from "nativewind";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  Dimensions,
   Easing,
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   View,
 } from "react-native";
+import { useColorScheme } from "nativewind";
 import { db } from "../lib/firebaseConfig";
 import { HeaderMenuContext } from "./_layout";
 import ManageGroup from "./admin/manage-group";
@@ -27,22 +29,7 @@ import AIAssistance from "./ai-assistance";
 
 const SIDEBAR_WIDTH = 290;
 
-type ScreenComponentProps = {
-  userId?: string;
-  userRole?: string;
-  memberName?: string;
-  userEmail?: string;
-  colorScheme?: 'light' | 'dark';
-};
-
-type ScreenItem = {
-  title: string;
-  path: string;
-  component: React.ComponentType<ScreenComponentProps>;
-  icon: keyof typeof MaterialIcons.glyphMap;
-};
-
-const normalizeRole = (value: unknown) => String(value ?? "").trim().toLowerCase();
+const normalizeRole = (value) => String(value ?? "").trim().toLowerCase();
 
 export default function Main() {
   const { id } = useLocalSearchParams();
@@ -55,19 +42,31 @@ export default function Main() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarMounted, setSidebarMounted] = useState(false);
   const [activePath, setActivePath] = useState("");
+  const [displayMemberId, setDisplayMemberId] = useState("");
+  const [isLandscape, setIsLandscape] = useState(false);
+  const [hoveredPath, setHoveredPath] = useState("");
 
   const sidebarAnim = useRef(new Animated.Value(0)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    const updateOrientation = () => {
+      const { width, height } = Dimensions.get("window");
+      setIsLandscape(width > height);
+    };
+
+    updateOrientation();
+    const subscription = Dimensions.addEventListener("change", updateOrientation);
+    return () => subscription?.remove();
+  }, []);
+
+  useEffect(() => {
     const load = async () => {
       if (!id) return;
       const snap = await getDoc(doc(db, "users", String(id)));
-      const data = snap.data() as any;
+      const data = snap.data() || {};
       setRole(normalizeRole(data?.role ?? data?.userRole ?? data?.accountRole ?? ""));
-      setMemberName(
-        String(data?.memberName || data?.name || data?.fullName || "Member")
-      );
+      setMemberName(String(data?.memberName || data?.name || data?.fullName || "Member"));
       setUserEmail(String(data?.email || data?.userEmail || ""));
     };
     load();
@@ -94,6 +93,14 @@ export default function Main() {
   }, [setMenuAction]);
 
   useEffect(() => {
+    if (isLandscape) {
+      setSidebarOpen(false);
+      setSidebarMounted(false);
+      sidebarAnim.setValue(0);
+      overlayAnim.setValue(0);
+      return;
+    }
+
     if (sidebarOpen) {
       setSidebarMounted(true);
       Animated.parallel([
@@ -128,10 +135,10 @@ export default function Main() {
         if (finished) setSidebarMounted(false);
       });
     }
-  }, [sidebarOpen, sidebarMounted, sidebarAnim, overlayAnim]);
+  }, [sidebarOpen, sidebarMounted, sidebarAnim, overlayAnim, isLandscape]);
 
-  const items = useMemo<ScreenItem[]>(() => {
-    const adminItems: ScreenItem[] = [
+  const items = useMemo(() => {
+    const adminItems = [
       { title: "Group", path: "/admin/group", component: Group, icon: "groups" },
       {
         title: "Manage Group",
@@ -160,7 +167,7 @@ export default function Main() {
       },
     ];
 
-    const memberItems: ScreenItem[] = [
+    const memberItems = [
       { title: "Tasks", path: "/task-board", component: Tasks, icon: "task-alt" },
       {
         title: "Calendar",
@@ -200,12 +207,14 @@ export default function Main() {
     }
   }, [items, activePath]);
 
-  const activeItem =
-    items.find((item) => item.path === activePath) || items[0] || null;
+  const activeItem = items.find((item) => item.path === activePath) || items[0] || null;
   const ActiveComponent = activeItem?.component || null;
 
-  const selectItem = (item: ScreenItem) => {
+  const selectItem = (item) => {
     setActivePath(item.path);
+    if (item.path === "/admin/member") {
+      setDisplayMemberId(String(id ?? ""));
+    }
     setSidebarOpen(false);
   };
 
@@ -219,96 +228,203 @@ export default function Main() {
     outputRange: [0, 1],
   });
 
-  return (
-    <View className="flex-1 bg-gray-100 dark:bg-gray-950">
-      <View className="flex-1">
-        {sidebarMounted ? (
-          <Pressable
-            className="absolute inset-0 z-10"
-            onPress={() => setSidebarOpen(false)}
+  const isDark = colorScheme === "dark";
+
+  const renderSidebarContent = () => (
+    <>
+      <Pressable
+        style={[
+          styles.profileBlock,
+          {
+            borderBottomColor: isDark ? "#1F2937" : "#E5E7EB",
+          },
+        ]}
+        onPress={() => {
+          const memberItem = items.find((item) => item.path === "/admin/member");
+          if (memberItem) {
+            selectItem(memberItem);
+          }
+        }}
+      >
+        <View style={styles.profileRow}>
+          <View
+            style={[
+              styles.profileIconWrap,
+              {
+                backgroundColor: isDark ? "#1F2937" : "#F3F4F6",
+              },
+            ]}
           >
+            <MaterialIcons
+              name="person"
+              size={24}
+              color={isDark ? "#9CA3AF" : "#6B7280"}
+            />
+          </View>
+
+          <View style={styles.profileTextWrap}>
+            <Text
+              style={[
+                styles.profileName,
+                {
+                  color: isDark ? "#FFFFFF" : "#111827",
+                },
+              ]}
+            >
+              {memberName}
+            </Text>
+            <Text
+              style={[
+                styles.profileRole,
+                {
+                  color: isDark ? "#9CA3AF" : "#6B7280",
+                },
+              ]}
+            >
+              {role.includes("admin") ? "Admin" : "Member"}
+            </Text>
+          </View>
+        </View>
+      </Pressable>
+
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.sidebarScrollContent}
+      >
+        <View style={styles.menuList}>
+          {items.map((item) => {
+            const isActive = activeItem?.path === item.path;
+            const isHovered = hoveredPath === item.path;
+
+            return (
+              <Pressable
+                key={item.path}
+                onPress={() => selectItem(item)}
+                onHoverIn={() => setHoveredPath(item.path)}
+                onHoverOut={() => setHoveredPath("")}
+                style={({ pressed }) => [
+                  styles.menuItem,
+                  {
+                    borderLeftColor: isActive ? "#2563EB" : "transparent",
+                    backgroundColor: isActive
+                      ? isDark
+                        ? "#1F2937"
+                        : "#F3F4F6"
+                      : pressed || isHovered
+                        ? isDark
+                          ? "rgba(96, 165, 250, 0.12)"
+                          : "rgba(59, 130, 246, 0.10)"
+                        : "transparent",
+                  },
+                ]}
+              >
+                <MaterialIcons
+                  name={item.icon}
+                  size={20}
+                  color={
+                    isActive
+                      ? "#2563EB"
+                      : isDark
+                        ? "#9CA3AF"
+                        : "#6B7280"
+                  }
+                />
+                <Text
+                  style={[
+                    styles.menuText,
+                    {
+                      color: isActive
+                        ? isDark
+                          ? "#FFFFFF"
+                          : "#111827"
+                        : isDark
+                          ? "#D1D5DB"
+                          : "#4B5563",
+                    },
+                  ]}
+                >
+                  {item.title}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </>
+  );
+
+  return (
+    <View
+      style={[
+        styles.root,
+        {
+          backgroundColor: isDark ? "#030712" : "#F3F4F6",
+        },
+      ]}
+    >
+      <View style={styles.row}>
+        {isLandscape ? (
+          <View
+            style={[
+              styles.landscapeSidebar,
+              {
+                backgroundColor: isDark ? "#111827" : "#FFFFFF",
+                borderRightColor: isDark ? "#1F2937" : "#E5E7EB",
+              },
+            ]}
+          >
+            {renderSidebarContent()}
+          </View>
+        ) : null}
+
+        {!isLandscape && sidebarMounted ? (
+          <Pressable style={styles.overlayWrap} onPress={() => setSidebarOpen(false)}>
             <Animated.View
-              style={{ opacity: overlayOpacity }}
-              className="flex-1 bg-black/30 dark:bg-black/50"
+              style={[
+                styles.overlay,
+                {
+                  opacity: overlayOpacity,
+                  backgroundColor: "rgba(0,0,0,0.35)",
+                },
+              ]}
             />
           </Pressable>
         ) : null}
 
-        {sidebarMounted ? (
+        {!isLandscape && sidebarMounted ? (
           <Animated.View
-            style={{
-              width: SIDEBAR_WIDTH,
-              transform: [{ translateX: sidebarTranslateX }],
-            }}
-            className="absolute bottom-0 left-0 top-0 z-20 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 pt-5 shadow-2xl"
+            style={[
+              styles.portraitSidebar,
+              {
+                backgroundColor: isDark ? "#111827" : "#FFFFFF",
+                borderRightColor: isDark ? "#1F2937" : "#E5E7EB",
+                transform: [{ translateX: sidebarTranslateX }],
+              },
+            ]}
           >
-            <View className="mb-4 border-b border-gray-200 dark:border-gray-800 pb-4">
-              <View className="flex-row items-center gap-3">
-                <View className="h-11 w-11 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
-                  <MaterialIcons name="person" size={24} color={colorScheme === "dark" ? "#9CA3AF" : "#6B7280"} />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-[18px] font-extrabold text-gray-900 dark:text-white">
-                    {memberName}
-                  </Text>
-                  <Text className="mt-1 text-[12px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    {role.includes("admin") ? "Admin" : "Member"}
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerClassName="pb-6"
-            >
-              <View className="mb-3">
-                {items.map((item) => {
-                  const isActive = activeItem?.path === item.path;
-
-                  return (
-                    <Pressable
-                      key={item.path}
-                      onPress={() => selectItem(item)}
-                      className={`mb-1 flex-row items-center border-l-4 px-3 py-3 ${
-                        isActive
-                          ? "border-blue-600 bg-gray-100 dark:bg-gray-800"
-                          : "border-transparent bg-transparent"
-                      }`}
-                    >
-                      <MaterialIcons
-                        name={item.icon}
-                        size={20}
-                        color={isActive ? "#2563EB" : colorScheme === "dark" ? "#9CA3AF" : "#6B7280"}
-                      />
-
-                      <Text
-                        className={`ml-3 flex-1 text-[15px] font-semibold ${
-                          isActive ? "text-gray-900 dark:text-white" : "text-gray-600 dark:text-gray-400"
-                        }`}
-                      >
-                        {item.title}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </ScrollView>
+            {renderSidebarContent()}
           </Animated.View>
         ) : null}
 
-        <View className="flex-1 items-stretch justify-stretch">
-          <View className="w-full flex-1">
+        <View style={styles.contentArea}>
+          <View style={styles.contentInner}>
             {ActiveComponent ? (
               <ActiveComponent
                 userId={String(id ?? "")}
                 userRole={role}
                 memberName={memberName}
                 userEmail={userEmail}
-                colorScheme={colorScheme as 'light' | 'dark'}
+                memberId={displayMemberId || String(id ?? "")}
+                colorScheme={colorScheme}
+                isLandscape={isLandscape}
               />
             ) : (
-              <View className="flex-1 bg-white" />
+              <View
+                style={{
+                  flex: 1,
+                  backgroundColor: isDark ? "#111827" : "#FFFFFF",
+                }}
+              />
             )}
           </View>
         </View>
@@ -316,3 +432,104 @@ export default function Main() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  row: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  landscapeSidebar: {
+    width: 288,
+    borderRightWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 20,
+  },
+  portraitSidebar: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: SIDEBAR_WIDTH,
+    borderRightWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    zIndex: 30,
+    elevation: 30,
+    shadowColor: "#000",
+    shadowOpacity: 0.22,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+  },
+  overlayWrap: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    elevation: 20,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  sidebarScrollContent: {
+    paddingBottom: 24,
+  },
+  profileBlock: {
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    paddingBottom: 16,
+  },
+  profileRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  profileIconWrap: {
+    height: 44,
+    width: 44,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileTextWrap: {
+    flex: 1,
+  },
+  profileName: {
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  profileRole: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  menuList: {
+    marginBottom: 12,
+  },
+  menuItem: {
+    marginBottom: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    borderLeftWidth: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  menuText: {
+    marginLeft: 12,
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  contentArea: {
+    flex: 1,
+    alignSelf: "stretch",
+    justifyContent: "stretch",
+  },
+  contentInner: {
+    flex: 1,
+    width: "100%",
+  },
+});
