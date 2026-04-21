@@ -6,13 +6,19 @@ import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
+  LayoutChangeEvent,
   Pressable,
-  ScrollView,
+  StyleSheet,
   Text,
   View,
 } from "react-native";
 import { TextInput } from "react-native-paper";
 import { db } from "../../lib/firebaseConfig";
+
+const PAGE_PADDING = 20;
+const GAP = 12;
+const MAX_LANDSCAPE_COLUMNS = 4;
 
 const normalizeIds = (ids) => Array.from(new Set(ids.filter(Boolean)));
 
@@ -41,12 +47,32 @@ const parseBooleanLike = (value, fallback = true) => {
   return fallback;
 };
 
-export default function Group({ userId, userRole, memberName }) {
+export default function Group({ userId, userRole, memberName, isLandscape }) {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [groups, setGroups] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  const columns = isLandscape ? MAX_LANDSCAPE_COLUMNS : 2;
+
+  const itemSize = useMemo(() => {
+    if (!containerWidth) return 0;
+    const availableWidth =
+      containerWidth - PAGE_PADDING * 2 - GAP * (columns - 1);
+    return Math.floor(availableWidth / columns);
+  }, [containerWidth, columns]);
+
+  const iconSize = useMemo(() => {
+    if (!itemSize) return 36;
+    return Math.max(28, Math.min(36, Math.floor(itemSize * 0.28)));
+  }, [itemSize]);
+
+  const iconBoxSize = useMemo(() => {
+    if (!itemSize) return 72;
+    return Math.max(52, Math.min(72, Math.floor(itemSize * 0.44)));
+  }, [itemSize]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -143,83 +169,186 @@ export default function Group({ userId, userRole, memberName }) {
     });
   };
 
-  return (
-    <View className="flex-1 bg-[#F7F8FA]">
-      <ScrollView
-        className="flex-1"
-        contentContainerClassName="px-5 pt-5 pb-[100px]"
-        showsVerticalScrollIndicator={false}
-      >
-        <View className="mb-4">
-          <TextInput
-            mode="outlined"
-            label="Search group"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            left={<TextInput.Icon icon="magnify" />}
-            right={
-              searchQuery ? (
-                <TextInput.Icon
-                  icon="close-circle"
-                  onPress={() => setSearchQuery("")}
-                />
-              ) : null
-            }
-            theme={{
-              roundness: 16,
-            }}
-            outlineStyle={{
-              borderRadius: 16,
-            }}
-            contentStyle={{
-              paddingHorizontal: 4,
-            }}
-            style={{
-              backgroundColor: "white",
-            }}
-          />
-        </View>
+  const onContainerLayout = (event) => {
+    const width = event.nativeEvent.layout.width;
+    setContainerWidth(width);
+  };
 
-        {loading ? (
-          <View className="py-10">
-            <ActivityIndicator />
-          </View>
-        ) : filteredGroups.length === 0 ? (
-          <View className="mt-8 items-center justify-center rounded-[18px] border border-dashed border-gray-300 bg-white p-6">
-            <Ionicons name="folder-open-outline" size={34} color="#9CA3AF" />
-            <Text className="mt-3 text-[15px] font-semibold text-gray-500">
-              No groups found
+  const renderItem = ({ item, index }) => {
+    const isLastInRow = (index + 1) % columns === 0;
+
+    return (
+      <View
+        style={[
+          styles.cardWrapper,
+          {
+            width: itemSize,
+            height: itemSize,
+            marginRight: isLastInRow ? 0 : GAP,
+            marginBottom: GAP,
+          },
+        ]}
+      >
+        <Pressable onPress={() => openGroup(item)} style={styles.card}>
+          <View style={styles.cardInner}>
+            <View
+              style={[
+                styles.iconBox,
+                {
+                  width: iconBoxSize,
+                  height: iconBoxSize,
+                  borderRadius: Math.floor(iconBoxSize * 0.22),
+                },
+              ]}
+            >
+              <Ionicons name={getIconName(item.kind)} size={iconSize} color="white" />
+            </View>
+            <Text numberOfLines={2} style={styles.cardTitle}>
+              {item.name}
             </Text>
           </View>
-        ) : (
-          <View className="mt-2 flex-row flex-wrap justify-between gap-y-3">
-            {filteredGroups.map((group) => (
-              <Pressable
-                key={group.id}
-                onPress={() => openGroup(group)}
-                className="aspect-square w-[48.5%] rounded-[18px] border border-gray-200 bg-white p-3 shadow-sm"
-              >
-                <View className="flex-1 items-center justify-center rounded-[14px] bg-gray-50">
-                  <View className="mb-3 h-[72px] w-[72px] items-center justify-center rounded-2xl bg-gray-900">
-                    <Ionicons
-                      name={getIconName(group.kind)}
-                      size={36}
-                      color="white"
-                    />
-                  </View>
+        </Pressable>
+      </View>
+    );
+  };
 
-                  <Text
-                    numberOfLines={2}
-                    className="px-2 text-center text-[16px] font-extrabold leading-5 text-gray-900"
-                  >
-                    {group.name}
-                  </Text>
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        )}
-      </ScrollView>
+  return (
+    <View style={styles.container} onLayout={onContainerLayout}>
+      {loading ? (
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator />
+        </View>
+      ) : (
+        <FlatList
+          data={filteredGroups}
+          key={`${columns}-${itemSize}`}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          numColumns={columns}
+          ListHeaderComponent={
+            <View style={styles.headerWrap}>
+              <TextInput
+                mode="outlined"
+                label="Search group"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                left={<TextInput.Icon icon="magnify" />}
+                right={
+                  searchQuery ? (
+                    <TextInput.Icon
+                      icon="close-circle"
+                      onPress={() => setSearchQuery("")}
+                    />
+                  ) : null
+                }
+                theme={{
+                  roundness: 16,
+                }}
+                outlineStyle={{
+                  borderRadius: 16,
+                }}
+                contentStyle={{
+                  paddingHorizontal: 4,
+                }}
+                style={{
+                  backgroundColor: "white",
+                }}
+              />
+            </View>
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyWrap}>
+              <Ionicons name="folder-open-outline" size={34} color="#9CA3AF" />
+              <Text style={styles.emptyText}>No groups found</Text>
+            </View>
+          }
+          contentContainerStyle={styles.listContent}
+          columnWrapperStyle={styles.columnWrapper}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#F7F8FA",
+  },
+  listContent: {
+    paddingHorizontal: PAGE_PADDING,
+    paddingTop: PAGE_PADDING,
+    paddingBottom: 100,
+  },
+  headerWrap: {
+    marginBottom: 16,
+  },
+  loadingWrap: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 40,
+  },
+  columnWrapper: {
+    justifyContent: "flex-start",
+  },
+  cardWrapper: {
+    overflow: "hidden",
+  },
+  card: {
+    flex: 1,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "white",
+    overflow: "hidden",
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+  },
+  cardInner: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    backgroundColor: "#F9FAFB",
+    padding: 12,
+  },
+  iconBox: {
+    marginBottom: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#111827",
+  },
+  cardTitle: {
+    paddingHorizontal: 8,
+    textAlign: "center",
+    fontSize: 16,
+    fontWeight: "800",
+    lineHeight: 20,
+    color: "#111827",
+  },
+  emptyWrap: {
+    marginTop: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: "#D1D5DB",
+    backgroundColor: "white",
+    padding: 24,
+  },
+  emptyText: {
+    marginTop: 12,
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#6B7280",
+  },
+});

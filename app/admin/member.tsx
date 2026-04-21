@@ -201,7 +201,7 @@ function SectionCard({
   );
 }
 
-export default function Member() {
+export default function Member(props?: { memberId?: string; groupId?: string; groupKind?: string; groupName?: string }) {
   const params = useLocalSearchParams<{
     memberId?: string;
     groupId?: string;
@@ -209,10 +209,10 @@ export default function Member() {
     groupName?: string;
   }>();
 
-  const memberId = String(params.memberId ?? "");
-  const groupId = String(params.groupId ?? "");
-  const groupKind = String(params.groupKind ?? "") as GroupKind;
-  const groupName = String(params.groupName ?? "");
+  const memberId = String(params.memberId ?? props?.memberId ?? "");
+  const groupId = String(params.groupId ?? props?.groupId ?? "");
+  const groupKind = String(params.groupKind ?? props?.groupKind ?? "") as GroupKind;
+  const groupName = String(params.groupName ?? props?.groupName ?? "");
 
   const [loading, setLoading] = useState(true);
   const [member, setMember] = useState<MemberData | null>(null);

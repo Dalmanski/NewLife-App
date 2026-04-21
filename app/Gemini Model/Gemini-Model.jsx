@@ -46,7 +46,7 @@ if ((!apiKeys || apiKeys.length === 0) && typeof process !== 'undefined' && proc
 
 const MODEL_NAME = (typeof process !== 'undefined' && process.env && process.env.GEMINI_MODEL)
   ? String(process.env.GEMINI_MODEL)
-  : 'gemini-2.5-flash'
+  : 'gemini-flash-lite-latest'
 
 let currentKeyIndex = 0
 let failedKeyIndices = new Set()
