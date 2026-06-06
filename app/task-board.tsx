@@ -407,18 +407,20 @@ function TaskCard({
 
       <View style={{ gap: 10 }}>
         <View className="flex-row items-center justify-between">
-          <View className="flex-row items-center" style={{ gap: 8 }}>
-            <Pressable
-              onPressIn={blockOpenBriefly}
-              onPress={() => setShowChecklist((prev) => !prev)}
-              className="rounded-full bg-slate-100 px-2.5 py-1"
-              style={({ pressed }) => (pressed ? { opacity: 0.8 } : undefined)}
-            >
-              <Text selectable={false} className="text-[11px] font-bold text-slate-600">
-                Checklist {checklistDone}/{checklistTotal}
-              </Text>
-            </Pressable>
-          </View>
+          {checklistTotal > 0 ? (
+            <View className="flex-row items-center" style={{ gap: 8 }}>
+              <Pressable
+                onPressIn={blockOpenBriefly}
+                onPress={() => setShowChecklist((prev) => !prev)}
+                className="rounded-full bg-slate-100 px-2.5 py-1"
+                style={({ pressed }) => (pressed ? { opacity: 0.8 } : undefined)}
+              >
+                <Text selectable={false} className="text-[11px] font-bold text-slate-600">
+                  Checklist {checklistDone}/{checklistTotal}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           <View className="flex-row items-center" style={{ gap: 8 }}>
             {formattedDeadline ? (

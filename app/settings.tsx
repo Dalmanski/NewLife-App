@@ -1,7 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 import { useColorScheme } from "nativewind";
 import { MaterialIcons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { db } from "@/lib/firebaseConfig";
@@ -13,20 +20,24 @@ const DARK_MODE_KEY = "newlife_dark_mode";
 export default function Settings() {
   const router = useRouter();
   const { colorScheme, toggleColorScheme } = useColorScheme();
+
   const [userData, setUserData] = useState<{
     name?: string;
     email?: string;
     role?: string;
   } | null>(null);
+
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadUserData = async () => {
       try {
         const userId = await AsyncStorage.getItem(STORAGE_KEY);
+
         if (userId) {
           const userDocRef = doc(db, "users", userId);
           const userDocSnap = await getDoc(userDocRef);
+
           if (userDocSnap.exists()) {
             setUserData(userDocSnap.data() as any);
           }
@@ -37,24 +48,38 @@ export default function Settings() {
         setLoading(false);
       }
     };
+
     loadUserData();
   }, []);
 
+  const goToLogin = () => {
+    if (Platform.OS === "web") {
+      window.location.replace("/login");
+      return;
+    }
+
+    router.replace("/login");
+  };
+
   const handleLogout = async () => {
-    Alert.alert("Logout", "Are you sure you want to logout?", [
-      { text: "Cancel", onPress: () => {} },
-      {
-        text: "Logout",
-        onPress: async () => {
-          try {
-            await AsyncStorage.removeItem(STORAGE_KEY);
-            router.replace("/login");
-          } catch (error) {
-            Alert.alert("Error", "Logout failed");
-          }
-        },
-      },
-    ]);
+    const confirmed =
+      Platform.OS === "web"
+        ? window.confirm("Are you sure you want to logout?")
+        : true;
+
+    if (!confirmed) return;
+
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+      await AsyncStorage.removeItem(DARK_MODE_KEY);
+
+      setTimeout(() => {
+        goToLogin();
+      }, 0);
+    } catch (error) {
+      console.error("Logout failed:", error);
+      Alert.alert("Error", "Logout failed");
+    }
   };
 
   const handleDarkModeToggle = async () => {
@@ -73,7 +98,6 @@ export default function Settings() {
       showsVerticalScrollIndicator={false}
     >
       <View className="px-6 py-8">
-        {/* Account Information Section */}
         <View className="mb-8">
           <Text className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
             Account Settings
@@ -84,6 +108,7 @@ export default function Settings() {
               <View className="w-16 h-16 rounded-full bg-blue-500 dark:bg-blue-600 items-center justify-center mr-4">
                 <MaterialIcons name="person" size={32} color="white" />
               </View>
+
               <View className="flex-1">
                 <Text className="text-lg font-semibold text-gray-900 dark:text-white">
                   {userData?.name || "User"}
@@ -109,7 +134,6 @@ export default function Settings() {
           </View>
         </View>
 
-        {/* Dark Mode Switch */}
         <View className="mb-8">
           <Text className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
             Appearance
@@ -121,7 +145,11 @@ export default function Settings() {
           >
             <View className="flex-row items-center">
               <MaterialCommunityIcons
-                name={colorScheme === "dark" ? "moon-waning-crescent" : "white-balance-sunny"}
+                name={
+                  colorScheme === "dark"
+                    ? "moon-waning-crescent"
+                    : "white-balance-sunny"
+                }
                 size={24}
                 color={colorScheme === "dark" ? "#FBBF24" : "#F59E0B"}
               />
@@ -129,6 +157,7 @@ export default function Settings() {
                 Dark Mode
               </Text>
             </View>
+
             <View
               className={`w-12 h-7 rounded-full items-center justify-center ${
                 colorScheme === "dark" ? "bg-blue-600" : "bg-gray-300"
@@ -143,7 +172,6 @@ export default function Settings() {
           </Pressable>
         </View>
 
-        {/* Logout Button */}
         <View>
           <Pressable
             onPress={handleLogout}

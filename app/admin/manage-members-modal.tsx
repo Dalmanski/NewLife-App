@@ -1,32 +1,46 @@
-// manage-member-modal.tsx
 import { MaterialIcons } from "@expo/vector-icons";
-import DateTimePicker from "@react-native-community/datetimepicker";
-import React from "react";
+import React, { useState } from "react";
 import {
+  Alert,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   Text,
   View,
+  Image,
 } from "react-native";
 import { TextInput as PaperTextInput } from "react-native-paper";
 
+export type Gender = "NA" | "male" | "female";
 export type MemberStatus = "unregister" | "pending" | "register";
 export type MemberRole = "member" | "admin";
 export type SortField = "name" | "idx";
 export type SortDirection = "asc" | "desc";
 export type ActiveSelector =
   | "ministry"
-  | "coreGroup"
   | "status"
   | "civilStatus"
   | "role"
+  | "gender"
   | null;
 
 export type OptionItem = {
   id: string;
   name: string;
+  colorTag?: string;
+};
+
+export type TagItem = {
+  name: string;
+  color: string;
+};
+
+export type SocialLinkItem = {
+  url: string;
+  platform: string;
+  host: string;
+  color: string;
+  icon: string;
 };
 
 export type MemberFormState = {
@@ -35,6 +49,8 @@ export type MemberFormState = {
   lastName: string;
   password: string;
   contact: string;
+  socialLinks: string[];
+  profileImageUrl?: string;
 };
 
 export type MemberRecord = {
@@ -46,13 +62,16 @@ export type MemberRecord = {
   password?: string;
   contact?: string;
   civilStatus?: string;
+  gender?: Gender;
   ministry: string[];
-  coreGroup: string[];
   status: MemberStatus;
   role?: MemberRole;
   idx?: number;
   startedAt?: number | null;
   statusChangedAt?: number | null;
+  tags?: TagItem[];
+  socialLinks?: SocialLinkItem[];
+  profileImageUrl?: string;
 };
 
 export type ActionMenuState = {
@@ -62,12 +81,59 @@ export type ActionMenuState = {
   left: number;
 };
 
+export const TAG_COLOR_OPTIONS = [
+  "#2563EB",
+  "#7C3AED",
+  "#DB2777",
+  "#EA580C",
+  "#16A34A",
+  "#0F766E",
+  "#4B5563",
+  "#D97706",
+];
+
 export const emptyMemberForm: MemberFormState = {
   name: "",
   firstName: "",
   lastName: "",
   password: "",
   contact: "",
+  socialLinks: [""],
+  profileImageUrl: "",
+};
+
+export const MINISTRY_TAG_COLOR_MAP: Record<string, string> = {
+  gray: "#6B7280",
+  blue: "#2563EB",
+  green: "#10B981",
+  amber: "#F59E0B",
+  red: "#EF4444",
+  purple: "#8B5CF6",
+  pink: "#EC4899",
+  teal: "#14B8A6",
+};
+
+export const HEX_TO_KEY_MAP: Record<string, string> = {
+  "#6B7280": "gray",
+  "#2563EB": "blue",
+  "#10B981": "green",
+  "#F59E0B": "amber",
+  "#EF4444": "red",
+  "#8B5CF6": "purple",
+  "#EC4899": "pink",
+  "#14B8A6": "teal",
+};
+
+export const normalizeMinistryColorTag = (value: unknown) => {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized.match(/^#[0-9A-F]{6}$/)) {
+    return normalized;
+  }
+  const lowerNorm = normalized.toLowerCase();
+  if (MINISTRY_TAG_COLOR_MAP[lowerNorm]) {
+    return MINISTRY_TAG_COLOR_MAP[lowerNorm];
+  }
+  return MINISTRY_TAG_COLOR_MAP.gray;
 };
 
 export const statusLabel: Record<MemberStatus, string> = {
@@ -87,9 +153,21 @@ export const roleLabel: Record<MemberRole, string> = {
   admin: "Admin",
 };
 
+export const genderLabel: Record<Gender, string> = {
+  NA: "NA",
+  male: "Male",
+  female: "Female",
+};
+
 export const roleOptions: OptionItem[] = [
   { id: "member", name: "Member" },
   { id: "admin", name: "Admin" },
+];
+
+export const genderOptions: OptionItem[] = [
+  { id: "NA", name: "NA" },
+  { id: "male", name: "Male" },
+  { id: "female", name: "Female" },
 ];
 
 export const statusOptions: { id: MemberStatus; name: string }[] = [
@@ -123,6 +201,13 @@ export const normalizeRole = (value: unknown): MemberRole => {
   const role = String(value ?? "").trim().toLowerCase();
   if (role === "admin") return "admin";
   return "member";
+};
+
+export const normalizeGender = (value: unknown): Gender => {
+  const gender = String(value ?? "").trim().toLowerCase();
+  if (gender === "male") return "male";
+  if (gender === "female") return "female";
+  return "NA";
 };
 
 export const normalizeTimestamp = (value: unknown): number | null => {
@@ -163,6 +248,167 @@ export const splitFullName = (value: unknown) => {
   };
 };
 
+type SocialPlatformMeta = {
+  platform: string;
+  host: string;
+  color: string;
+  icon: string;
+};
+
+export const detectSocialPlatform = (value: string): SocialPlatformMeta => {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return {
+      platform: "Website",
+      host: "",
+      color: "#64748B",
+      icon: "public",
+    };
+  }
+
+  let candidate = text;
+  if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `https://${candidate}`;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+
+    if (
+      host.includes("facebook.com") ||
+      host === "fb.com" ||
+      host.endsWith(".fb.com") ||
+      host.includes("fb.me")
+    ) {
+      return { platform: "Facebook", host, color: "#1877F2", icon: "language" };
+    }
+
+    if (host.includes("instagram.com")) {
+      return { platform: "Instagram", host, color: "#E1306C", icon: "photo-camera" };
+    }
+
+    if (host.includes("tiktok.com")) {
+      return { platform: "TikTok", host, color: "#111827", icon: "music-note" };
+    }
+
+    if (host === "x.com" || host.includes("twitter.com")) {
+      return { platform: "X", host, color: "#111827", icon: "close" };
+    }
+
+    if (host.includes("youtube.com") || host === "youtu.be") {
+      return { platform: "YouTube", host, color: "#FF0000", icon: "play-circle-outline" };
+    }
+
+    if (host.includes("linkedin.com")) {
+      return { platform: "LinkedIn", host, color: "#0A66C2", icon: "work" };
+    }
+
+    if (host.includes("threads.net")) {
+      return { platform: "Threads", host, color: "#111827", icon: "forum" };
+    }
+
+    if (host.includes("github.com")) {
+      return { platform: "GitHub", host, color: "#111827", icon: "code" };
+    }
+
+    if (host.includes("reddit.com")) {
+      return { platform: "Reddit", host, color: "#FF4500", icon: "groups" };
+    }
+
+    if (host.includes("t.me") || host.includes("telegram.me")) {
+      return { platform: "Telegram", host, color: "#229ED9", icon: "send" };
+    }
+
+    if (host.includes("wa.me") || host.includes("whatsapp.com")) {
+      return { platform: "WhatsApp", host, color: "#25D366", icon: "chat" };
+    }
+
+    if (host.includes("discord.com")) {
+      return { platform: "Discord", host, color: "#5865F2", icon: "chat" };
+    }
+
+    return {
+      platform: host ? "Website" : "Unknown",
+      host,
+      color: "#64748B",
+      icon: "public",
+    };
+  } catch {
+    return {
+      platform: "Unknown",
+      host: "",
+      color: "#64748B",
+      icon: "link",
+    };
+  }
+};
+
+export const normalizeSocialLinks = (value: unknown): SocialLinkItem[] => {
+  if (!Array.isArray(value)) return [];
+
+  const result: SocialLinkItem[] = [];
+  const seen = new Set<string>();
+
+  value.forEach((item) => {
+    let url = "";
+
+    if (typeof item === "string") {
+      url = item.trim();
+    } else if (item && typeof item === "object") {
+      const raw = item as { url?: unknown; link?: unknown; value?: unknown };
+      url = String(raw.url ?? raw.link ?? raw.value ?? "").trim();
+    }
+
+    if (!url) return;
+
+    const key = url.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    const meta = detectSocialPlatform(url);
+    result.push({
+      url,
+      platform: meta.platform,
+      host: meta.host,
+      color: meta.color,
+      icon: meta.icon,
+    });
+  });
+
+  return result;
+};
+
+export const normalizeTags = (value: unknown): TagItem[] => {
+  if (!Array.isArray(value)) return [];
+
+  const result: TagItem[] = [];
+
+  value.forEach((item) => {
+    if (typeof item === "string") {
+      const name = item.trim();
+      if (name) result.push({ name, color: "#64748B" });
+      return;
+    }
+
+    if (item && typeof item === "object") {
+      const raw = item as { name?: unknown; color?: unknown };
+      const name = String(raw.name ?? "").trim();
+      if (!name) return;
+      const color = String(raw.color ?? "#64748B").trim() || "#64748B";
+      result.push({ name, color });
+    }
+  });
+
+  const seen = new Set<string>();
+  return result.filter((tag) => {
+    const key = tag.name.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 type ManageMemberModalProps = {
   formOpen: boolean;
   setFormOpen: (value: boolean) => void;
@@ -193,6 +439,9 @@ type ManageMemberModalProps = {
   selectedRole: MemberRole;
   setSelectedRole: React.Dispatch<React.SetStateAction<MemberRole>>;
 
+  selectedGender: Gender;
+  setSelectedGender: React.Dispatch<React.SetStateAction<Gender>>;
+
   selectedStartedAt: number;
   setSelectedStartedAt: React.Dispatch<React.SetStateAction<number>>;
 
@@ -205,11 +454,7 @@ type ManageMemberModalProps = {
   selectedMinistries: string[];
   setSelectedMinistries: React.Dispatch<React.SetStateAction<string[]>>;
 
-  selectedCoreGroups: string[];
-  setSelectedCoreGroups: React.Dispatch<React.SetStateAction<string[]>>;
-
   ministryOptions: OptionItem[];
-  coreGroupOptions: OptionItem[];
   loadingOptions: boolean;
   saving: boolean;
   onSave: () => void | Promise<void>;
@@ -221,7 +466,20 @@ type ManageMemberModalProps = {
   setSortDirection: React.Dispatch<React.SetStateAction<SortDirection>>;
 
   onOpenSelector: (kind: ActiveSelector) => Promise<void> | void;
-  openAddMember: () => void;
+
+  selectedTags: TagItem[];
+  setSelectedTags: React.Dispatch<React.SetStateAction<TagItem[]>>;
+
+  deleteConfirmOpen: boolean;
+  setDeleteConfirmOpen: (value: boolean) => void;
+  deleteTarget: MemberRecord | null;
+  onConfirmDelete: () => void | Promise<void>;
+  onRequestDelete: (item: MemberRecord) => void;
+
+  statusChangeOpen: boolean;
+  setStatusChangeOpen: (value: boolean) => void;
+  statusChangeTarget: MemberRecord | null;
+  onConfirmStatusChange: (status: MemberStatus) => void | Promise<void>;
 };
 
 export default function ManageMemberModal({
@@ -246,6 +504,8 @@ export default function ManageMemberModal({
   setSelectedCivilStatus,
   selectedRole,
   setSelectedRole,
+  selectedGender,
+  setSelectedGender,
   selectedStartedAt,
   setSelectedStartedAt,
   showPassword,
@@ -254,10 +514,7 @@ export default function ManageMemberModal({
   setShowStartedDatePicker,
   selectedMinistries,
   setSelectedMinistries,
-  selectedCoreGroups,
-  setSelectedCoreGroups,
   ministryOptions,
-  coreGroupOptions,
   loadingOptions,
   saving,
   onSave,
@@ -266,51 +523,59 @@ export default function ManageMemberModal({
   sortDirection,
   setSortDirection,
   onOpenSelector,
-  openAddMember,
+  selectedTags,
+  setSelectedTags,
+  deleteConfirmOpen,
+  setDeleteConfirmOpen,
+  deleteTarget,
+  onConfirmDelete,
+  onRequestDelete,
+  statusChangeOpen,
+  setStatusChangeOpen,
+  statusChangeTarget,
+  onConfirmStatusChange,
 }: ManageMemberModalProps) {
+  const [tagModalOpen, setTagModalOpen] = useState(false);
+  const [tagEditingIndex, setTagEditingIndex] = useState<number | null>(null);
+  const [tagDraftName, setTagDraftName] = useState("");
+  const [tagDraftColor, setTagDraftColor] = useState(TAG_COLOR_OPTIONS[0]);
+
   const activeOptions =
     activeSelector === "ministry"
       ? ministryOptions
-      : activeSelector === "coreGroup"
-        ? coreGroupOptions
-        : activeSelector === "civilStatus"
-          ? civilStatusOptions
-          : activeSelector === "role"
-            ? roleOptions
+      : activeSelector === "civilStatus"
+        ? civilStatusOptions
+        : activeSelector === "role"
+          ? roleOptions
+          : activeSelector === "gender"
+            ? genderOptions
             : statusOptions;
 
   const activeTitle =
     activeSelector === "ministry"
       ? "Select Ministry"
-      : activeSelector === "coreGroup"
-        ? "Select Core Group"
-        : activeSelector === "civilStatus"
-          ? "Select Civil Status"
-          : activeSelector === "role"
-            ? "Select Role"
+      : activeSelector === "civilStatus"
+        ? "Select Civil Status"
+        : activeSelector === "role"
+          ? "Select Role"
+          : activeSelector === "gender"
+            ? "Select Gender"
             : "Select Status";
 
   const activeSelected =
     activeSelector === "ministry"
       ? selectedMinistries
-      : activeSelector === "coreGroup"
-        ? selectedCoreGroups
-        : activeSelector === "civilStatus"
-          ? [selectedCivilStatus]
-          : activeSelector === "role"
-            ? [selectedRole]
+      : activeSelector === "civilStatus"
+        ? [selectedCivilStatus]
+        : activeSelector === "role"
+          ? [selectedRole]
+          : activeSelector === "gender"
+            ? [selectedGender]
             : [selectedStatus];
 
   const toggleSelected = (value: string) => {
     if (activeSelector === "ministry") {
       setSelectedMinistries((prev) =>
-        prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]
-      );
-      return;
-    }
-
-    if (activeSelector === "coreGroup") {
-      setSelectedCoreGroups((prev) =>
         prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]
       );
       return;
@@ -328,6 +593,11 @@ export default function ManageMemberModal({
 
     if (activeSelector === "role") {
       setSelectedRole(value as MemberRole);
+      return;
+    }
+
+    if (activeSelector === "gender") {
+      setSelectedGender(value as Gender);
     }
   };
 
@@ -336,35 +606,104 @@ export default function ManageMemberModal({
     setSelectorOpen(false);
   };
 
+  const openTagEditor = (index?: number) => {
+    if (typeof index === "number") {
+      const item = selectedTags[index];
+      if (!item) return;
+      setTagEditingIndex(index);
+      setTagDraftName(item.name);
+      setTagDraftColor(item.color || TAG_COLOR_OPTIONS[0]);
+    } else {
+      setTagEditingIndex(null);
+      setTagDraftName("");
+      setTagDraftColor(TAG_COLOR_OPTIONS[0]);
+    }
+    setTagModalOpen(true);
+  };
+
+  const saveTag = () => {
+    const name = tagDraftName.trim();
+    if (!name) {
+      Alert.alert("Error", "Tag name is required");
+      return;
+    }
+
+    const nextTag = {
+      name,
+      color: tagDraftColor,
+    };
+
+    setSelectedTags((prev) => {
+      if (tagEditingIndex !== null) {
+        const next = [...prev];
+        next[tagEditingIndex] = nextTag;
+        return next.filter((tag) => tag.name.trim());
+      }
+      return [...prev, nextTag].filter((tag) => tag.name.trim());
+    });
+
+    setTagModalOpen(false);
+    setTagEditingIndex(null);
+    setTagDraftName("");
+    setTagDraftColor(TAG_COLOR_OPTIONS[0]);
+  };
+
+  const deleteTag = (index: number) => {
+    setSelectedTags((prev) => prev.filter((_, i) => i !== index));
+  };
+
+
+
+  const closeTagModal = () => {
+    setTagModalOpen(false);
+    setTagEditingIndex(null);
+    setTagDraftName("");
+    setTagDraftColor(TAG_COLOR_OPTIONS[0]);
+  };
+
+  const addSocialLink = () => {
+    setForm((prev) => ({
+      ...prev,
+      socialLinks: [...(prev.socialLinks?.length ? prev.socialLinks : [""]), ""],
+    }));
+  };
+
+  const updateSocialLink = (index: number, value: string) => {
+    setForm((prev) => {
+      const next = [...(prev.socialLinks?.length ? prev.socialLinks : [""])];
+      next[index] = value;
+      return {
+        ...prev,
+        socialLinks: next,
+      };
+    });
+  };
+
+  const removeSocialLink = (index: number) => {
+    setForm((prev) => {
+      const next = [...(prev.socialLinks?.length ? prev.socialLinks : [""])];
+      next.splice(index, 1);
+      return {
+        ...prev,
+        socialLinks: next.length ? next : [""],
+      };
+    });
+  };
+
   return (
     <>
-      <Pressable
-        onPress={openAddMember}
-        className="absolute bottom-5 right-5 h-[58px] w-[58px] items-center justify-center rounded-full bg-blue-600"
-        style={({ pressed }) => [
-          pressed
-            ? { opacity: 0.85, transform: [{ scale: 0.98 }] }
-            : {
-                shadowColor: "#000",
-                shadowOpacity: 0.2,
-                shadowRadius: 10,
-                shadowOffset: { width: 0, height: 4 },
-                elevation: 6,
-              },
-        ]}
-      >
-        <MaterialIcons name="person-add-alt-1" size={24} color="#fff" />
-      </Pressable>
-
       <Modal
         visible={formOpen}
         transparent
-        animationType="slide"
+        animationType="fade"
         onRequestClose={() => setFormOpen(false)}
       >
-        <Pressable className="flex-1 justify-end bg-black/40" onPress={() => setFormOpen(false)}>
+        <Pressable
+          className="flex-1 items-center justify-center bg-black/40 px-5 py-6"
+          onPress={() => setFormOpen(false)}
+        >
           <Pressable
-            className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2"
+            className="w-full max-w-[560px] rounded-[24px] bg-white px-[18px] pb-[18px] pt-2"
             onPress={() => {}}
           >
             <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
@@ -384,209 +723,292 @@ export default function ManageMemberModal({
                 <Text className="text-[12px] font-extrabold uppercase tracking-[0.6px] text-slate-500">
                   Role:
                 </Text>
-                <Text className="text-[15px] font-bold text-slate-900">{roleLabel[selectedRole]}</Text>
+                <Text className="text-[15px] font-bold text-slate-900">
+                  {roleLabel[selectedRole]}
+                </Text>
               </Pressable>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="gap-3 pb-2">
-              <PaperField
-                label="Nickname"
-                value={form.name}
-                onChangeText={(value) => setForm((prev) => ({ ...prev, name: value }))}
-                icon="account"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-
-              <View className="flex-row gap-3">
-                <View className="flex-1">
+            <ScrollView
+              showsVerticalScrollIndicator
+              showsHorizontalScrollIndicator={false}
+              persistentScrollbar
+              nestedScrollEnabled
+              style={{
+                maxHeight: "78vh" as any,
+                overflowY: "scroll" as any,
+                overflowX: "hidden" as any,
+              }}
+              contentContainerStyle={{
+                paddingBottom: 8,
+              }}
+            >
+              <View style={{ minWidth: "100%" }}>
+                <View className="gap-3">
                   <PaperField
-                    label="First Name"
-                    value={form.firstName}
-                    onChangeText={(value) => setForm((prev) => ({ ...prev, firstName: value }))}
-                    icon="account-outline"
-                    autoCapitalize="words"
+                    label="Nickname"
+                    value={form.name}
+                    onChangeText={(value) => setForm((prev) => ({ ...prev, name: value }))}
+                    icon="account"
+                    autoCapitalize="none"
                     autoCorrect={false}
                   />
-                </View>
 
-                <View className="flex-1">
-                  <PaperField
-                    label="Last Name"
-                    value={form.lastName}
-                    onChangeText={(value) => setForm((prev) => ({ ...prev, lastName: value }))}
-                    icon="account-outline"
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
-                </View>
-              </View>
-
-              <View className="relative">
-                <PaperTextInput
-                  mode="outlined"
-                  label="Password"
-                  value={form.password}
-                  onChangeText={(value) => setForm((prev) => ({ ...prev, password: value }))}
-                  left={<PaperTextInput.Icon icon="lock" />}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  dense
-                  style={{
-                    backgroundColor: "#FFFFFF",
-                    paddingRight: 44,
-                  }}
-                  outlineStyle={{
-                    borderRadius: 14,
-                    borderColor: "#E2E8F0",
-                  }}
-                  contentStyle={{
-                    paddingVertical: 6,
-                  }}
-                  theme={{
-                    roundness: 14,
-                    colors: {
-                      primary: "#2563EB",
-                    },
-                  }}
-                />
-
-                <Pressable
-                  onPress={() => setShowPassword((prev) => !prev)}
-                  className="absolute right-3 top-[15px] h-7 w-7 items-center justify-center"
-                  hitSlop={10}
-                >
-                  <MaterialIcons
-                    name={showPassword ? "visibility-off" : "visibility"}
-                    size={22}
-                    color="#6B7280"
-                  />
-                </Pressable>
-              </View>
-
-              <PaperField
-                label="Contact"
-                value={form.contact}
-                onChangeText={(value) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    contact: value.replace(/[^0-9]/g, ""),
-                  }))
-                }
-                icon="phone"
-                keyboardType="phone-pad"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-
-              <Pressable
-                onPress={() => setShowStartedDatePicker((prev) => !prev)}
-                className="gap-1 rounded-[14px] border border-slate-200 bg-white px-4 py-3"
-                style={({ pressed }) =>
-                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                }
-              >
-                <View className="mb-1 flex-row items-center gap-2">
-                  <MaterialIcons name="event" size={18} color="#6B7280" />
-                  <Text className="text-xs font-bold uppercase text-slate-500">Member Started</Text>
-                </View>
-                <View className="flex-row items-center justify-between gap-2">
-                  <Text className="flex-1 text-[15px] font-bold text-slate-900">
-                    {formatInputDate(selectedStartedAt)}
-                  </Text>
-                  <MaterialIcons
-                    name={showStartedDatePicker ? "keyboard-arrow-up" : "keyboard-arrow-down"}
-                    size={20}
-                    color="#6B7280"
-                  />
-                </View>
-              </Pressable>
-
-              {showStartedDatePicker ? (
-                <View className="overflow-hidden rounded-[16px] border border-slate-200 bg-slate-50 p-3">
-                  <DateTimePicker
-                    value={new Date(selectedStartedAt || Date.now())}
-                    mode="date"
-                    display={Platform.OS === "ios" ? "spinner" : "default"}
-                    onChange={(_event, date) => {
-                      if (date) {
-                        setSelectedStartedAt(date.getTime());
-                      }
-
-                      if (Platform.OS === "android") {
-                        setShowStartedDatePicker(false);
-                      }
-                    }}
-                  />
-
-                  {Platform.OS === "ios" ? (
-                    <View className="mt-3 flex-row justify-end">
-                      <Pressable
-                        onPress={() => setShowStartedDatePicker(false)}
-                        className="rounded-[14px] bg-slate-900 px-4 py-3"
-                      >
-                        <Text className="font-extrabold text-white">Done</Text>
-                      </Pressable>
+                  <View className="flex-row gap-3">
+                    <View className="flex-1">
+                      <PaperField
+                        label="First Name"
+                        value={form.firstName}
+                        onChangeText={(value) => setForm((prev) => ({ ...prev, firstName: value }))}
+                        icon="account-outline"
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                      />
                     </View>
-                  ) : null}
+
+                    <View className="flex-1">
+                      <PaperField
+                        label="Last Name"
+                        value={form.lastName}
+                        onChangeText={(value) => setForm((prev) => ({ ...prev, lastName: value }))}
+                        icon="account-outline"
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                      />
+                    </View>
+                  </View>
+
+                  <View className="relative">
+                    <PaperTextInput
+                      mode="outlined"
+                      label="Password"
+                      value={form.password}
+                      onChangeText={(value) => setForm((prev) => ({ ...prev, password: value }))}
+                      left={<PaperTextInput.Icon icon="lock" />}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      dense
+                      style={{
+                        backgroundColor: "#FFFFFF",
+                        paddingRight: 44,
+                      }}
+                      outlineStyle={{
+                        borderRadius: 14,
+                        borderColor: "#E2E8F0",
+                      }}
+                      contentStyle={{
+                        paddingVertical: 6,
+                      }}
+                      theme={{
+                        roundness: 14,
+                        colors: {
+                          primary: "#2563EB",
+                        },
+                      }}
+                    />
+
+                    <Pressable
+                      onPress={() => setShowPassword((prev) => !prev)}
+                      className="absolute right-3 top-[15px] h-7 w-7 items-center justify-center"
+                      hitSlop={10}
+                    >
+                      <MaterialIcons
+                        name={showPassword ? "visibility-off" : "visibility"}
+                        size={22}
+                        color="#6B7280"
+                      />
+                    </Pressable>
+                  </View>
+
+                  <PaperField
+                    label="Contact"
+                    value={form.contact}
+                    onChangeText={(value) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        contact: value.replace(/[^0-9]/g, ""),
+                      }))
+                    }
+                    icon="phone"
+                    keyboardType="phone-pad"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+
+                  <View className="flex-row gap-3">
+                    <View className="flex-1">
+                      <SelectField
+                        label="Civil Status"
+                        value={selectedCivilStatus}
+                        icon="favorite"
+                        onPress={() => onOpenSelector("civilStatus")}
+                      />
+                    </View>
+
+                    <View className="flex-1">
+                      <SelectField
+                        label="Gender"
+                        value={genderLabel[selectedGender]}
+                        icon="person"
+                        onPress={() => onOpenSelector("gender")}
+                      />
+                    </View>
+                  </View>
+
+                  {editingId && (
+                    <>
+                      <SelectField
+                        label="Ministry"
+                        value={selectedMinistries.length ? selectedMinistries.join(", ") : "NA"}
+                        icon="groups"
+                        onPress={() => onOpenSelector("ministry")}
+                      />
+
+                      <View className="rounded-[14px] border border-slate-200 bg-white px-4 py-3">
+                        <View className="mb-2 flex-row items-center justify-between">
+                          <View className="flex-row items-center gap-2">
+                            <MaterialIcons name="link" size={18} color="#6B7280" />
+                            <Text className="text-xs font-bold uppercase text-slate-500">
+                              Social Links
+                            </Text>
+                          </View>
+                          <Pressable
+                            onPress={addSocialLink}
+                            className="rounded-full bg-slate-900 px-3 py-1.5"
+                            style={({ pressed }) =>
+                              pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                            }
+                          >
+                            <Text className="text-xs font-extrabold text-white">+</Text>
+                          </Pressable>
+                        </View>
+
+                        <View className="gap-3">
+                          {(form.socialLinks?.length ? form.socialLinks : [""]).map((link, index) => {
+                            const meta = detectSocialPlatform(link);
+                            const hasValue = link.trim().length > 0;
+
+                            return (
+                              <View key={`social-link-${index}`} className="gap-2">
+                                <PaperField
+                                  label={`Link ${index + 1}`}
+                                  value={link}
+                                  onChangeText={(value) => updateSocialLink(index, value)}
+                                  icon="link"
+                                  rightIcon="close"
+                                  onRightPress={() => removeSocialLink(index)}
+                                  autoCapitalize="none"
+                                  autoCorrect={false}
+                                />
+
+                                <View className="flex-row items-center justify-between gap-2">
+                                  <View className="flex-row items-center gap-2">
+                                    <View
+                                      className="h-2.5 w-2.5 rounded-full"
+                                      style={{ backgroundColor: hasValue ? meta.color : "#94A3B8" }}
+                                    />
+                                    <Text className="text-[12px] font-bold uppercase text-slate-500">
+                                      {hasValue ? `Detected: ${meta.platform}` : "Enter a link"}
+                                    </Text>
+                                  </View>
+                                  <Text className="flex-1 text-right text-[12px] text-slate-400">
+                                    {hasValue ? meta.host : " "}
+                                  </Text>
+                                </View>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </View>
+
+                      <View className="rounded-[14px] border border-slate-200 bg-white px-4 py-3">
+                        <View className="mb-2 flex-row items-center justify-between">
+                          <View className="flex-row items-center gap-2">
+                            <MaterialIcons name="label" size={18} color="#6B7280" />
+                            <Text className="text-xs font-bold uppercase text-slate-500">Tags</Text>
+                          </View>
+                          <Pressable
+                            onPress={() => openTagEditor()}
+                            className="rounded-full bg-slate-900 px-3 py-1.5"
+                            style={({ pressed }) =>
+                              pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                            }
+                          >
+                            <Text className="text-xs font-extrabold text-white">Add Tag</Text>
+                          </Pressable>
+                        </View>
+
+                        {selectedTags.length ? (
+                          <View className="flex-row flex-wrap gap-2">
+                            {selectedTags.map((tag, index) => (
+                              <Pressable
+                                key={`${tag.name}-${index}`}
+                                onPress={() => openTagEditor(index)}
+                                className="flex-row items-center gap-2 rounded-full px-3 py-2"
+                                style={{
+                                  backgroundColor: `${tag.color || "#64748B"}20`,
+                                  borderWidth: 1,
+                                  borderColor: tag.color || "#64748B",
+                                }}
+                              >
+                                <View
+                                  className="h-2.5 w-2.5 rounded-full"
+                                  style={{ backgroundColor: tag.color || "#64748B" }}
+                                />
+                                <Text
+                                  className="text-[12px] font-bold"
+                                  style={{ color: tag.color || "#64748B" }}
+                                >
+                                  {tag.name}
+                                </Text>
+                                <Pressable
+                                  onPress={() => deleteTag(index)}
+                                  hitSlop={8}
+                                  style={({ pressed }) => (pressed ? { opacity: 0.7 } : undefined)}
+                                >
+                                  <MaterialIcons
+                                    name="close"
+                                    size={16}
+                                    color={tag.color || "#64748B"}
+                                  />
+                                </Pressable>
+                              </Pressable>
+                            ))}
+                          </View>
+                        ) : (
+                          <Text className="text-[14px] font-semibold text-slate-400">No tags added</Text>
+                        )}
+                      </View>
+                    </>
+                  )}
+
+                  <View className="flex-row justify-end gap-2.5 pt-1">
+                    <Pressable
+                      onPress={() => setFormOpen(false)}
+                      className="rounded-[14px] bg-slate-200 px-4 py-3"
+                      style={({ pressed }) =>
+                        pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                      }
+                    >
+                      <Text className="font-extrabold text-slate-900">Cancel</Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={onSave}
+                      disabled={saving}
+                      className="rounded-[14px] bg-slate-900 px-4 py-3"
+                      style={({ pressed }) => [
+                        pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined,
+                        saving ? { opacity: 0.7 } : undefined,
+                      ]}
+                    >
+                      <Text className="font-extrabold text-white">
+                        {saving ? "Saving..." : editingId ? "Update Member" : "Add Member"}
+                      </Text>
+                    </Pressable>
+                  </View>
                 </View>
-              ) : null}
-
-              <View className="flex-row gap-3">
-                <SelectField
-                  label="Civil Status"
-                  value={selectedCivilStatus}
-                  icon="favorite"
-                  onPress={() => onOpenSelector("civilStatus")}
-                />
-
-                <SelectField
-                  label="Status"
-                  value={statusLabel[selectedStatus]}
-                  icon="badge"
-                  onPress={() => onOpenSelector("status")}
-                />
-              </View>
-
-              <SelectField
-                label="Ministry"
-                value={selectedMinistries.length ? selectedMinistries.join(", ") : "NA"}
-                icon="groups"
-                onPress={() => onOpenSelector("ministry")}
-              />
-
-              <SelectField
-                label="Core Group"
-                value={selectedCoreGroups.length ? selectedCoreGroups.join(", ") : "NA"}
-                icon="group-work"
-                onPress={() => onOpenSelector("coreGroup")}
-              />
-
-              <View className="flex-row justify-end gap-2.5 pt-1">
-                <Pressable
-                  onPress={() => setFormOpen(false)}
-                  className="rounded-[14px] bg-slate-200 px-4 py-3"
-                  style={({ pressed }) =>
-                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
-                  }
-                >
-                  <Text className="font-extrabold text-slate-900">Cancel</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={onSave}
-                  disabled={saving}
-                  className="rounded-[14px] bg-slate-900 px-4 py-3"
-                  style={({ pressed }) => [
-                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined,
-                    saving ? { opacity: 0.7 } : undefined,
-                  ]}
-                >
-                  <Text className="font-extrabold text-white">
-                    {saving ? "Saving..." : editingId ? "Update Member" : "Add Member"}
-                  </Text>
-                </Pressable>
               </View>
             </ScrollView>
           </Pressable>
@@ -596,12 +1018,15 @@ export default function ManageMemberModal({
       <Modal
         visible={selectorOpen}
         transparent
-        animationType="slide"
+        animationType="fade"
         onRequestClose={closeSelector}
       >
-        <Pressable className="flex-1 justify-end bg-black/40" onPress={closeSelector}>
+        <Pressable
+          className="flex-1 items-center justify-center bg-black/40 px-5 py-6"
+          onPress={closeSelector}
+        >
           <Pressable
-            className="max-h-[90%] rounded-t-[24px] bg-white px-[18px] pb-[18px] pt-2"
+            className="w-full max-w-[520px] max-h-[90%] rounded-[24px] bg-white px-[18px] pb-[18px] pt-2"
             onPress={() => {}}
           >
             <View className="mb-3 self-center h-[5px] w-[44px] rounded-full bg-slate-300" />
@@ -610,9 +1035,15 @@ export default function ManageMemberModal({
             <ScrollView
               className="max-h-[430px]"
               contentContainerClassName="gap-2.5 pb-3"
-              showsVerticalScrollIndicator={false}
+              showsVerticalScrollIndicator
+              showsHorizontalScrollIndicator={false}
+              persistentScrollbar
+              style={{
+                overflowY: "scroll" as any,
+                overflowX: "hidden" as any,
+              }}
             >
-              {loadingOptions && (activeSelector === "ministry" || activeSelector === "coreGroup") ? (
+              {loadingOptions && activeSelector === "ministry" ? (
                 <View className="py-5">
                   <Text className="text-center text-slate-500">Loading...</Text>
                 </View>
@@ -623,19 +1054,22 @@ export default function ManageMemberModal({
                   const isStatus = activeSelector === "status";
                   const isCivilStatus = activeSelector === "civilStatus";
                   const isRole = activeSelector === "role";
+                  const isGender = activeSelector === "gender";
                   const selected = isStatus
                     ? selectedStatus === item.id
                     : isCivilStatus
                       ? selectedCivilStatus === item.name
                       : isRole
                         ? selectedRole === item.id
-                        : activeSelected.includes(item.name);
+                        : isGender
+                          ? selectedGender === item.id
+                          : activeSelected.includes(item.name);
 
                   return (
                     <Pressable
                       key={item.id}
                       onPress={() =>
-                        toggleSelected(isStatus || isCivilStatus || isRole ? item.id : item.name)
+                        toggleSelected(isStatus || isCivilStatus || isRole || isGender ? item.id : item.name)
                       }
                       className={`min-h-[48px] flex-row items-center gap-3 rounded-[14px] px-4 ${
                         selected ? "bg-blue-50" : "bg-slate-50"
@@ -647,6 +1081,18 @@ export default function ManageMemberModal({
                       <View className="h-[22px] w-[22px] items-center justify-center rounded-md border border-slate-400 bg-white">
                         {selected ? <Text className="text-sm font-extrabold text-emerald-600">✓</Text> : null}
                       </View>
+
+                      {activeSelector === "ministry" ? (
+                        <View
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{
+                            backgroundColor:
+                              MINISTRY_TAG_COLOR_MAP[normalizeMinistryColorTag(item.colorTag ?? "gray")] ??
+                              "#64748B",
+                          }}
+                        />
+                      ) : null}
+
                       <Text className="flex-1 text-[15px] font-bold text-slate-900">{item.name}</Text>
                     </Pressable>
                   );
@@ -667,15 +1113,119 @@ export default function ManageMemberModal({
         </Pressable>
       </Modal>
 
+      <Modal visible={tagModalOpen} transparent animationType="fade" onRequestClose={closeTagModal}>
+        <Pressable className="flex-1 items-center justify-center bg-black/40 px-5 py-6" onPress={closeTagModal}>
+          <Pressable
+            className="w-full max-w-[460px] rounded-[24px] bg-white p-4"
+            onPress={() => {}}
+            style={{
+              shadowColor: "#000",
+              shadowOpacity: 0.2,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 12,
+            }}
+          >
+            <View className="mb-3 flex-row items-center justify-between">
+              <Text className="text-[20px] font-extrabold text-slate-900">
+                {tagEditingIndex !== null ? "Edit Tag" : "Add Tag"}
+              </Text>
+              <Pressable onPress={closeTagModal} hitSlop={10}>
+                <MaterialIcons name="close" size={24} color="#64748B" />
+              </Pressable>
+            </View>
+
+            <View className="gap-3">
+              <PaperTextInput
+                mode="outlined"
+                label="Tag Name"
+                value={tagDraftName}
+                onChangeText={setTagDraftName}
+                left={<PaperTextInput.Icon icon="label" />}
+                autoCapitalize="words"
+                autoCorrect={false}
+                dense
+                style={{
+                  backgroundColor: "#FFFFFF",
+                }}
+                outlineStyle={{
+                  borderRadius: 14,
+                  borderColor: "#E2E8F0",
+                }}
+                contentStyle={{
+                  paddingVertical: 6,
+                }}
+                theme={{
+                  roundness: 14,
+                  colors: {
+                    primary: "#2563EB",
+                  },
+                }}
+              />
+
+              <View className="gap-2">
+                <Text className="text-xs font-bold uppercase text-slate-500">Color</Text>
+                <View className="flex-row flex-wrap gap-2">
+                  {TAG_COLOR_OPTIONS.map((color) => {
+                    const selected = color === tagDraftColor;
+                    return (
+                      <Pressable
+                        key={color}
+                        onPress={() => setTagDraftColor(color)}
+                        className="h-10 w-10 items-center justify-center rounded-full"
+                        style={{
+                          backgroundColor: `${color}25`,
+                          borderWidth: 2,
+                          borderColor: selected ? color : "transparent",
+                        }}
+                      >
+                        <View className="h-5 w-5 rounded-full" style={{ backgroundColor: color }} />
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View className="flex-row justify-end gap-2">
+                <Pressable
+                  onPress={closeTagModal}
+                  className="rounded-[14px] bg-slate-200 px-4 py-3"
+                  style={({ pressed }) =>
+                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                  }
+                >
+                  <Text className="font-extrabold text-slate-900">Cancel</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={saveTag}
+                  className="rounded-[14px] bg-slate-900 px-4 py-3"
+                  style={({ pressed }) =>
+                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                  }
+                >
+                  <Text className="font-extrabold text-white">
+                    {tagEditingIndex !== null ? "Update" : "Save"}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <Modal
         visible={sortOpen}
         transparent
         animationType="fade"
         onRequestClose={() => setSortOpen(false)}
       >
-        <Pressable className="flex-1 bg-black/20 pt-[180px] pl-5" onPress={() => setSortOpen(false)}>
+        <Pressable
+          className="flex-1 items-center justify-center bg-black/20 px-5 py-6"
+          onPress={() => setSortOpen(false)}
+        >
           <Pressable
-            className="w-[170px] overflow-hidden rounded-2xl border border-slate-200 bg-white"
+            className="w-full max-w-[320px] overflow-hidden rounded-2xl border border-slate-200 bg-white"
             onPress={() => {}}
             style={{
               shadowColor: "#000",
@@ -685,7 +1235,9 @@ export default function ManageMemberModal({
               elevation: 8,
             }}
           >
-            <Text className="px-4 pb-2 pt-4 text-[13px] font-extrabold text-slate-900">Sort by</Text>
+            <Text className="px-4 pb-2 pt-4 text-[13px] font-extrabold text-slate-900">
+              Sort by
+            </Text>
 
             <Pressable
               onPress={() => {
@@ -722,8 +1274,136 @@ export default function ManageMemberModal({
         </Pressable>
       </Modal>
 
-      {actionMenu.visible && actionMenu.item ? (
-        <Pressable className="absolute inset-0 z-50 bg-transparent" onPress={onCloseActionMenu}>
+      <Modal
+        visible={deleteConfirmOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDeleteConfirmOpen(false)}
+      >
+        <Pressable
+          className="flex-1 items-center justify-center bg-black/40 px-5 py-6"
+          onPress={() => setDeleteConfirmOpen(false)}
+        >
+          <Pressable
+            className="w-full max-w-[420px] rounded-[24px] bg-white p-5"
+            onPress={() => {}}
+            style={{
+              shadowColor: "#000",
+              shadowOpacity: 0.2,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 12,
+            }}
+          >
+            <Text className="text-[20px] font-extrabold text-slate-900">Delete member?</Text>
+            <Text className="mt-2 text-[15px] text-slate-600">
+              Are you sure you want to delete{" "}
+              <Text className="font-bold text-slate-900">
+                {deleteTarget?.fullName?.trim() ||
+                  [deleteTarget?.firstName, deleteTarget?.lastName].filter(Boolean).join(" ").trim() ||
+                  deleteTarget?.name ||
+                  "this member"}
+              </Text>
+              ?
+            </Text>
+
+            <View className="mt-5 flex-row justify-end gap-2">
+              <Pressable
+                onPress={() => setDeleteConfirmOpen(false)}
+                className="rounded-[14px] bg-slate-200 px-4 py-3"
+                style={({ pressed }) =>
+                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                }
+              >
+                <Text className="font-extrabold text-slate-900">Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={onConfirmDelete}
+                className="rounded-[14px] bg-red-600 px-4 py-3"
+                style={({ pressed }) =>
+                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                }
+              >
+                <Text className="font-extrabold text-white">Delete</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={statusChangeOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStatusChangeOpen(false)}
+      >
+        <Pressable
+          className="flex-1 items-center justify-center bg-black/40 px-5 py-6"
+          onPress={() => setStatusChangeOpen(false)}
+        >
+          <Pressable
+            className="w-full max-w-[420px] rounded-[24px] bg-white p-5"
+            onPress={() => {}}
+            style={{
+              shadowColor: "#000",
+              shadowOpacity: 0.2,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 12,
+            }}
+          >
+            <Text className="text-[20px] font-extrabold text-slate-900">Change status</Text>
+            <Text className="mt-2 text-[15px] text-slate-600">
+              {statusChangeTarget?.fullName?.trim() ||
+                [statusChangeTarget?.firstName, statusChangeTarget?.lastName].filter(Boolean).join(" ").trim() ||
+                statusChangeTarget?.name ||
+                "This member"}
+            </Text>
+
+            <View className="mt-4 gap-2">
+              {(["unregister", "pending", "register"] as MemberStatus[]).map((status) => {
+                const isActive = statusChangeTarget?.status === status;
+                return (
+                  <Pressable
+                    key={status}
+                    onPress={() => onConfirmStatusChange(status)}
+                    className={`min-h-[48px] flex-row items-center justify-between rounded-[14px] px-4 ${
+                      isActive ? "bg-blue-50" : "bg-slate-50"
+                    }`}
+                    style={({ pressed }) =>
+                      pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                    }
+                  >
+                    <Text className="text-[15px] font-bold text-slate-900">
+                      {statusLabel[status]}
+                    </Text>
+                    <View
+                      className="h-3 w-3 rounded-full"
+                      style={{ backgroundColor: statusColor[status] }}
+                    />
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View className="mt-5 flex-row justify-end">
+              <Pressable
+                onPress={() => setStatusChangeOpen(false)}
+                className="rounded-[14px] bg-slate-200 px-4 py-3"
+                style={({ pressed }) =>
+                  pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                }
+              >
+                <Text className="font-extrabold text-slate-900">Close</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={actionMenu.visible && !!actionMenu.item} transparent animationType="none">
+        <Pressable className="flex-1 bg-transparent" onPress={onCloseActionMenu}>
           <View
             className="absolute w-[176px] overflow-hidden rounded-[18px] bg-white"
             style={{
@@ -739,9 +1419,9 @@ export default function ManageMemberModal({
             <View className="border-b border-slate-100 px-4 py-3">
               <Text className="text-[16px] font-extrabold text-slate-900">Actions</Text>
               <Text className="mt-0.5 text-[13px] text-slate-500">
-                {actionMenu.item.fullName?.trim() ||
-                  [actionMenu.item.firstName, actionMenu.item.lastName].filter(Boolean).join(" ").trim() ||
-                  actionMenu.item.name}
+                {actionMenu.item?.fullName?.trim() ||
+                  [actionMenu.item?.firstName, actionMenu.item?.lastName].filter(Boolean).join(" ").trim() ||
+                  actionMenu.item?.name}
               </Text>
             </View>
 
@@ -772,6 +1452,19 @@ export default function ManageMemberModal({
             </Pressable>
 
             <Pressable
+              onPress={() => {
+                const current = actionMenu.item;
+                onCloseActionMenu();
+                if (current) onRequestDelete(current);
+              }}
+              className="min-h-[52px] flex-row items-center gap-3 px-4"
+              style={({ pressed }) => (pressed ? { backgroundColor: "#FEF2F2" } : undefined)}
+            >
+              <MaterialIcons name="delete" size={20} color="#DC2626" />
+              <Text className="text-[15px] font-bold text-red-600">Delete</Text>
+            </Pressable>
+
+            <Pressable
               onPress={onCloseActionMenu}
               className="border-t border-slate-100 min-h-[52px] items-center justify-center"
               style={({ pressed }) => (pressed ? { backgroundColor: "#F8FAFC" } : undefined)}
@@ -780,7 +1473,7 @@ export default function ManageMemberModal({
             </Pressable>
           </View>
         </Pressable>
-      ) : null}
+      </Modal>
     </>
   );
 }
@@ -883,22 +1576,45 @@ function SelectField({
   );
 }
 
-function formatList(items?: string[]) {
-  if (!items || items.length === 0) return "NA";
-  if (items.length <= 2) return items.join(", ");
-  return `${items.slice(0, 2).join(", ")} +${items.length - 2}`;
-}
-
-function formatTimestamp(value?: number | null) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "NA";
-  return new Date(value).toLocaleString();
-}
-
 function formatInputDate(value?: number | null) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "Select date";
+  if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) return "Select date";
   return new Date(value).toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
     year: "numeric",
   });
+}
+
+function formatDateInputValue(value?: number | null) {
+  if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) return "";
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseWebDateValue(value: string) {
+  const text = value.trim();
+  if (!text) return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date.getTime();
 }

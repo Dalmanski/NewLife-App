@@ -2,6 +2,8 @@ import { MaterialIcons } from "@expo/vector-icons";
 import * as NavigationBar from "expo-navigation-bar";
 import { useLocalSearchParams } from "expo-router";
 import { doc, getDoc } from "firebase/firestore";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Image } from "react-native";
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -22,14 +24,15 @@ import Group from "./admin/group";
 import ManageMembers from "./admin/manage-members";
 import Calendar from "./calendar";
 import EventScreen from "./event";
-import SpecialMeeting from "./member/special-meeting";
-import Volunteers from "./member/volunteers";
 import Tasks from "./task-board";
 import AIAssistance from "./ai-assistance";
+import Bible from "./bible";
 
 const SIDEBAR_WIDTH = 290;
 
-const normalizeRole = (value) => String(value ?? "").trim().toLowerCase();
+const PLACEHOLDER_PFP = require("../assets/images/placeholder-pfp.avif");
+
+const normalizeRole = (value: unknown) => String(value ?? "").trim().toLowerCase();
 
 export default function Main() {
   const { id } = useLocalSearchParams();
@@ -65,9 +68,15 @@ export default function Main() {
       if (!id) return;
       const snap = await getDoc(doc(db, "users", String(id)));
       const data = snap.data() || {};
-      setRole(normalizeRole(data?.role ?? data?.userRole ?? data?.accountRole ?? ""));
+      const userRole = normalizeRole(data?.role ?? data?.userRole ?? data?.accountRole ?? "");
+      setRole(userRole);
       setMemberName(String(data?.memberName || data?.name || data?.fullName || "Member"));
       setUserEmail(String(data?.email || data?.userEmail || ""));
+      try {
+        await AsyncStorage.setItem("userRole", userRole);
+      } catch (error) {
+        console.error("Failed to store user role:", error);
+      }
     };
     load();
   }, [id]);
@@ -139,13 +148,13 @@ export default function Main() {
 
   const items = useMemo(() => {
     const adminItems = [
-      { title: "Group", path: "/admin/group", component: Group, icon: "groups" },
       {
-        title: "Manage Group",
-        path: "/admin/manage-group",
-        component: ManageGroup,
-        icon: "groups",
+        title: "Members",
+        path: "/admin/manage-members",
+        component: ManageMembers,
+        icon: "person",
       },
+      { title: "Group", path: "/admin/group", component: Group, icon: "groups" },
       {
         title: "Calendar",
         path: "/calendar",
@@ -154,16 +163,22 @@ export default function Main() {
       },
       { title: "Event", path: "/event", component: EventScreen, icon: "event" },
       {
-        title: "Members",
-        path: "/admin/manage-members",
-        component: ManageMembers,
-        icon: "person",
-      },
-      {
         title: "AI Assistant",
         path: "/ai-assistance",
         component: AIAssistance,
         icon: "smart-toy",
+      },
+      {
+        title: "Bible",
+        path: "/bible",
+        component: Bible,
+        icon: "menu-book",
+      },
+      {
+        title: "Manage Group",
+        path: "/admin/manage-group",
+        component: ManageGroup,
+        icon: "groups",
       },
     ];
 
@@ -177,16 +192,10 @@ export default function Main() {
       },
       { title: "Event", path: "/event", component: EventScreen, icon: "event" },
       {
-        title: "Volunteer",
-        path: "/member/volunteers",
-        component: Volunteers,
-        icon: "volunteer-activism",
-      },
-      {
-        title: "Special Meeting",
-        path: "/member/special-meeting",
-        component: SpecialMeeting,
-        icon: "groups-2",
+        title: "Bible",
+        path: "/bible",
+        component: Bible,
+        icon: "menu-book",
       },
       {
         title: "AI Assistant",
@@ -210,9 +219,9 @@ export default function Main() {
   const activeItem = items.find((item) => item.path === activePath) || items[0] || null;
   const ActiveComponent = activeItem?.component || null;
 
-  const selectItem = (item) => {
+  const selectItem = (item: { path: string }) => {
     setActivePath(item.path);
-    if (item.path === "/admin/member") {
+    if (item.path === "/admin/manage-members") {
       setDisplayMemberId(String(id ?? ""));
     }
     setSidebarOpen(false);
@@ -229,9 +238,10 @@ export default function Main() {
   });
 
   const isDark = colorScheme === "dark";
+  const isAndroidPortrait = Platform.OS === "android" && !isLandscape;
 
   const renderSidebarContent = () => (
-    <>
+    <View style={styles.sidebarContent}>
       <Pressable
         style={[
           styles.profileBlock,
@@ -240,7 +250,7 @@ export default function Main() {
           },
         ]}
         onPress={() => {
-          const memberItem = items.find((item) => item.path === "/admin/member");
+          const memberItem = items.find((item) => item.path === "/admin/manage-members");
           if (memberItem) {
             selectItem(memberItem);
           }
@@ -255,10 +265,10 @@ export default function Main() {
               },
             ]}
           >
-            <MaterialIcons
-              name="person"
-              size={24}
-              color={isDark ? "#9CA3AF" : "#6B7280"}
+            <Image
+              source={PLACEHOLDER_PFP}
+              style={{ width: 44, height: 44, borderRadius: 999 }}
+              resizeMode="cover"
             />
           </View>
 
@@ -270,6 +280,7 @@ export default function Main() {
                   color: isDark ? "#FFFFFF" : "#111827",
                 },
               ]}
+              numberOfLines={1}
             >
               {memberName}
             </Text>
@@ -280,6 +291,7 @@ export default function Main() {
                   color: isDark ? "#9CA3AF" : "#6B7280",
                 },
               ]}
+              numberOfLines={1}
             >
               {role.includes("admin") ? "Admin" : "Member"}
             </Text>
@@ -288,10 +300,11 @@ export default function Main() {
       </Pressable>
 
       <ScrollView
+        style={styles.sidebarScroll}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.sidebarScrollContent}
       >
-        <View style={styles.menuList}>
+        <View style={[styles.menuList, { gap: (Platform.OS === "web" || isLandscape) ? 0 : 20 }]}>
           {items.map((item) => {
             const isActive = activeItem?.path === item.path;
             const isHovered = hoveredPath === item.path;
@@ -300,10 +313,14 @@ export default function Main() {
               <Pressable
                 key={item.path}
                 onPress={() => selectItem(item)}
-                onHoverIn={() => setHoveredPath(item.path)}
-                onHoverOut={() => setHoveredPath("")}
+                onHoverIn={Platform.OS === "web" ? () => setHoveredPath(item.path) : undefined}
+                onHoverOut={Platform.OS === "web" ? () => setHoveredPath("") : undefined}
+                android_ripple={{
+                  color: isDark ? "rgba(96, 165, 250, 0.15)" : "rgba(59, 130, 246, 0.12)",
+                }}
                 style={({ pressed }) => [
                   styles.menuItem,
+                  isAndroidPortrait && styles.menuItemAndroidPortrait,
                   {
                     borderLeftColor: isActive ? "#2563EB" : "transparent",
                     backgroundColor: isActive
@@ -318,39 +335,38 @@ export default function Main() {
                   },
                 ]}
               >
-                <MaterialIcons
-                  name={item.icon}
-                  size={20}
-                  color={
-                    isActive
-                      ? "#2563EB"
-                      : isDark
-                        ? "#9CA3AF"
-                        : "#6B7280"
-                  }
-                />
-                <Text
-                  style={[
-                    styles.menuText,
-                    {
-                      color: isActive
-                        ? isDark
-                          ? "#FFFFFF"
-                          : "#111827"
-                        : isDark
-                          ? "#D1D5DB"
-                          : "#4B5563",
-                    },
-                  ]}
-                >
-                  {item.title}
-                </Text>
+                <View style={[styles.menuRow, isAndroidPortrait && styles.menuRowAndroidPortrait]}>
+                  <MaterialIcons
+                    name={item.icon as any}
+                    size={isAndroidPortrait ? 21 : 20}
+                    color={isActive ? "#2563EB" : isDark ? "#9CA3AF" : "#6B7280"}
+                    style={[styles.menuIcon, isAndroidPortrait && styles.menuIconAndroidPortrait]}
+                  />
+                  <Text
+                    style={[
+                      styles.menuText,
+                      isAndroidPortrait && styles.menuTextAndroidPortrait,
+                      {
+                        color: isActive
+                          ? isDark
+                            ? "#FFFFFF"
+                            : "#111827"
+                          : isDark
+                            ? "#D1D5DB"
+                            : "#4B5563",
+                      },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {item.title}
+                  </Text>
+                </View>
               </Pressable>
             );
           })}
         </View>
       </ScrollView>
-    </>
+    </View>
   );
 
   return (
@@ -366,11 +382,13 @@ export default function Main() {
         {isLandscape ? (
           <View
             style={[
+              styles.sidebarBase,
               styles.landscapeSidebar,
               {
                 backgroundColor: isDark ? "#111827" : "#FFFFFF",
                 borderRightColor: isDark ? "#1F2937" : "#E5E7EB",
               },
+              Platform.OS === "android" ? styles.androidSidebarSurface : styles.iosSidebarSurface,
             ]}
           >
             {renderSidebarContent()}
@@ -394,12 +412,14 @@ export default function Main() {
         {!isLandscape && sidebarMounted ? (
           <Animated.View
             style={[
+              styles.sidebarBase,
               styles.portraitSidebar,
               {
                 backgroundColor: isDark ? "#111827" : "#FFFFFF",
                 borderRightColor: isDark ? "#1F2937" : "#E5E7EB",
                 transform: [{ translateX: sidebarTranslateX }],
               },
+              Platform.OS === "android" ? styles.androidSidebarSurface : styles.iosSidebarSurface,
             ]}
           >
             {renderSidebarContent()}
@@ -441,9 +461,12 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
   },
-  landscapeSidebar: {
-    width: 288,
+  sidebarBase: {
+    width: SIDEBAR_WIDTH,
     borderRightWidth: 1,
+    overflow: "hidden",
+  },
+  landscapeSidebar: {
     paddingHorizontal: 16,
     paddingTop: 20,
   },
@@ -452,16 +475,24 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
-    width: SIDEBAR_WIDTH,
-    borderRightWidth: 1,
-    paddingHorizontal: 16,
-    paddingTop: 20,
     zIndex: 30,
     elevation: 30,
+    paddingHorizontal: 16,
+    paddingTop: 20,
     shadowColor: "#000",
     shadowOpacity: 0.22,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 10 },
+  },
+  androidSidebarSurface: {
+    elevation: 8,
+    shadowOpacity: 0,
+  },
+  iosSidebarSurface: {
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
   },
   overlayWrap: {
     ...StyleSheet.absoluteFillObject,
@@ -471,8 +502,14 @@ const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
   },
+  sidebarContent: {
+    flex: 1,
+  },
+  sidebarScroll: {
+    flex: 1,
+  },
   sidebarScrollContent: {
-    paddingBottom: 24,
+    paddingBottom: 28,
   },
   profileBlock: {
     marginBottom: 16,
@@ -482,7 +519,6 @@ const styles = StyleSheet.create({
   profileRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
   },
   profileIconWrap: {
     height: 44,
@@ -493,6 +529,7 @@ const styles = StyleSheet.create({
   },
   profileTextWrap: {
     flex: 1,
+    marginLeft: 12,
   },
   profileName: {
     fontSize: 18,
@@ -509,24 +546,46 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   menuItem: {
-    marginBottom: 4,
     flexDirection: "row",
     alignItems: "center",
     borderLeftWidth: 4,
     paddingHorizontal: 12,
     paddingVertical: 12,
     borderRadius: 10,
+    minHeight: 48,
+  },
+  menuItemAndroidPortrait: {
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+  },
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    minWidth: 0,
+  },
+  menuRowAndroidPortrait: {
+    gap: 8,
+  },
+  menuIcon: {
+    marginRight: 12,
+  },
+  menuIconAndroidPortrait: {
+    marginRight: 6,
   },
   menuText: {
-    marginLeft: 12,
     flex: 1,
+    flexShrink: 1,
     fontSize: 15,
     fontWeight: "600",
   },
+  menuTextAndroidPortrait: {
+    marginLeft: 0,
+  },
   contentArea: {
     flex: 1,
+    minWidth: 0,
     alignSelf: "stretch",
-    justifyContent: "stretch",
   },
   contentInner: {
     flex: 1,

@@ -8,29 +8,42 @@ import {
   doc,
   getDoc,
   getDocs,
+  setDoc,
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Dimensions, Modal, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  Image,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import { db } from "../../lib/firebaseConfig";
 import {
   NewSubgroupModal,
   AddMembersModal,
   UserPickerModal,
   EditGroupModal,
-  AddDirectMembersModal,
   DeleteConfirmModal,
+  useModalFunctions,
 } from "./members-modal";
-
-type GroupKind = "ministry" | "coreGroup";
 
 type UserOption = {
   id: string;
   name: string;
   role: string;
+  gender?: string;
   joinedGroups: string[];
   joinedText: string;
+  profileImageUrl?: string;
 };
 
 type SubgroupItem = {
@@ -46,6 +59,7 @@ type SubgroupItem = {
 type MemberCard = {
   id: string;
   name: string;
+  gender?: string;
   registered: boolean;
 };
 
@@ -56,14 +70,18 @@ type GroupItem = {
   leaderId?: string;
   leaderName?: string;
   leaderRole?: string;
-  createdAt?: Timestamp;
+  createdAt?: Timestamp | string | null;
   isActive?: boolean;
-  kind: GroupKind;
+  ministryType?: string;
   members: MemberCard[];
   subgroups: SubgroupItem[];
 };
 
-type PickerMode = "newSubgroupLeader" | "newSubgroupMembers" | "existingSubgroupMembers" | "directMembers";
+type PickerMode =
+  | "newSubgroupLeader"
+  | "newSubgroupMembers"
+  | "existingSubgroupMembers"
+  | "directMembers";
 
 type SubGroupAssignment = {
   groupId: string;
@@ -74,6 +92,12 @@ type SubGroupAssignment = {
   leaderName: string;
   leaderRole: string;
 };
+
+const DEFAULT_GROUP_ID = "seed-care-group";
+const DEFAULT_GROUP_NAME = "Care Group";
+const PLACEHOLDER_PFP_MALE = require("../../assets/images/placeholder-pfp.avif");
+const PLACEHOLDER_PFP_FEMALE = require("../../assets/images/placeholder-pfp-female.jpg");
+const PLACEHOLDER_PFP_UNKNOWN = require("../../assets/images/placeholder-pfp-unknown.jpg");
 
 const normalizeIds = (ids: string[]) => Array.from(new Set(ids.filter(Boolean)));
 
@@ -103,120 +127,275 @@ const indexToLetters = (index: number) => {
   return result;
 };
 
-const getCollectionName = (kind: GroupKind) => (kind === "ministry" ? "ministries" : "coreGroups");
+const getCollectionName = () => "ministries";
 
 const getAnyId = (value: any) => {
   if (typeof value === "string") return value.trim();
   return String(value?.id ?? value?.memberId ?? value?.userId ?? value?.uid ?? "").trim();
 };
 
+const normalizeText = (value: any) => String(value ?? "").trim().toLowerCase();
+
+const extractMinistryNames = (value: any) => {
+  const items = Array.isArray(value) ? value : value ? [value] : [];
+  return items
+    .map((item) => {
+      if (!item) return "";
+      if (typeof item === "string") return String(item).trim();
+      if (typeof item === "object") {
+        return String(item.groupName ?? item.subgroupName ?? item.name ?? item.label ?? item.title ?? "").trim();
+      }
+      return String(item).trim();
+    })
+    .filter(Boolean);
+};
+
+const getUserMinistryNames = (raw: any) => {
+  const names = [...extractMinistryNames(raw?.ministry), ...extractMinistryNames(raw?.subGroup?.ministry)];
+  return Array.from(new Set(names));
+};
+
+const userMatchesMinistry = (raw: any, matchers: Set<string>) => {
+  if (!matchers.size) return true;
+  const names = getUserMinistryNames(raw);
+  return names.some((name) => matchers.has(normalizeText(name)));
+};
+
+function SquarePersonTile({
+  name,
+  gender,
+  registered,
+  showStatus,
+  onPress,
+  compact = false,
+  profileImageUrl,
+}: {
+  name: string;
+  gender?: string;
+  registered: boolean;
+  showStatus: boolean;
+  onPress?: () => void;
+  compact?: boolean;
+  profileImageUrl?: string;
+}) {
+  const titleSize = compact ? "text-[13px]" : "text-[15px]";
+  const statusSize = compact ? "text-[9px]" : "text-[10px]";
+
+  const placeholderPfp =
+    gender === "female"
+      ? PLACEHOLDER_PFP_FEMALE
+      : gender === "male"
+        ? PLACEHOLDER_PFP_MALE
+        : PLACEHOLDER_PFP_UNKNOWN;
+
+  const imageSource = profileImageUrl ? { uri: profileImageUrl } : placeholderPfp;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      className="overflow-hidden rounded-[18px] border border-gray-200 bg-white"
+      style={{ aspectRatio: 1 }}
+    >
+      <View className="flex-1 p-2">
+        <View style={{ flex: 1 }}>
+          <View className="w-full flex-1 overflow-hidden rounded-2xl bg-gray-100">
+            <Image
+              source={imageSource}
+              resizeMode="cover"
+              style={{
+                width: "100%",
+                height: "100%",
+              }}
+            />
+          </View>
+
+          <View
+            className="w-full items-center justify-center rounded-lg bg-white px-1 pt-2"
+            style={{
+              minHeight: compact ? 42 : 48,
+            }}
+          >
+            <Text
+              numberOfLines={2}
+              ellipsizeMode="tail"
+              allowFontScaling={true}
+              className={`text-center font-extrabold text-gray-900 ${titleSize}`}
+              style={{
+                includeFontPadding: false,
+                textAlignVertical: "center",
+                lineHeight: compact ? 15 : 18,
+                width: "100%",
+              }}
+            >
+              {name}
+            </Text>
+
+            {showStatus ? (
+              <View className="mt-1 flex-row items-center gap-1">
+                <Ionicons
+                  name={registered ? "checkmark-circle" : "alert-circle"}
+                  size={compact ? 12 : 13}
+                  color={registered ? "#16A34A" : "#D97706"}
+                />
+                <Text className={`font-bold ${registered ? "text-emerald-600" : "text-amber-600"} ${statusSize}`}>
+                  {registered ? "Registered" : "Unregistered"}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 export default function Members() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
   const params = useLocalSearchParams<{
     groupId?: string;
-    groupKind?: string;
     groupName?: string;
   }>();
 
   const groupId = String(params.groupId ?? "");
-  const groupKind = String(params.groupKind ?? "") as GroupKind;
   const groupNameParam = String(params.groupName ?? "");
 
   const [loading, setLoading] = useState(true);
   const [group, setGroup] = useState<GroupItem | null>(null);
   const [users, setUsers] = useState<UserOption[]>([]);
+  const [allUsers, setAllUsers] = useState<UserOption[]>([]);
   const [savingAction, setSavingAction] = useState(false);
-
-  const [showNewSubgroupModal, setShowNewSubgroupModal] = useState(false);
-  const [showAddMembersModal, setShowAddMembersModal] = useState(false);
-  const [showAddDirectMembersModal, setShowAddDirectMembersModal] = useState(false);
-  const [showUserPickerModal, setShowUserPickerModal] = useState(false);
-  const [showEditGroupModal, setShowEditGroupModal] = useState(false);
 
   const [showSubgroupMenu, setShowSubgroupMenu] = useState(false);
   const [subgroupMenuTargetIndex, setSubgroupMenuTargetIndex] = useState<number | null>(null);
   const [subgroupMenuAnchor, setSubgroupMenuAnchor] = useState<{ left: number; top: number } | null>(null);
-  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
-  const [deleteConfirmIndex, setDeleteConfirmIndex] = useState<number | null>(null);
 
   const subgroupMenuRefs = useRef<Record<string, View | null>>({});
+  const [contentWidth, setContentWidth] = useState(0);
 
-  const [newSubgroupLeaderId, setNewSubgroupLeaderId] = useState("");
-  const [newSubgroupMemberIds, setNewSubgroupMemberIds] = useState<string[]>([]);
-  const [directMemberIds, setDirectMemberIds] = useState<string[]>([]);
-  const [targetSubgroupIndex, setTargetSubgroupIndex] = useState<number | null>(null);
-  const [memberSelectionIds, setMemberSelectionIds] = useState<string[]>([]);
-  const [editSubgroupLeaderId, setEditSubgroupLeaderId] = useState("");
-
-  const [editName, setEditName] = useState("");
-  const [editDescription, setEditDescription] = useState("");
-  const [editLeaderId, setEditLeaderId] = useState("");
-  const [editPickerMode, setEditPickerMode] = useState(false);
-
-  const [pickerMode, setPickerMode] = useState<PickerMode>("newSubgroupLeader");
-  const [pickerTargetIndex, setPickerTargetIndex] = useState<number | null>(null);
-  const [pickerSearch, setPickerSearch] = useState("");
-  const [pickerSelectedIds, setPickerSelectedIds] = useState<string[]>([]);
+  const isSeedCareGroup =
+    groupId === DEFAULT_GROUP_ID || groupNameParam.trim().toLowerCase() === DEFAULT_GROUP_NAME.toLowerCase();
 
   const loadData = useCallback(async () => {
-    if (!groupId || !groupKind) {
+    if (!groupId) {
       setLoading(false);
       return;
     }
 
     setLoading(true);
     try {
-      const collectionName = getCollectionName(groupKind);
-      const groupRef = doc(db, collectionName, groupId);
+      const groupRef = doc(db, getCollectionName(), groupId);
       const [groupSnap, usersSnap] = await Promise.all([getDoc(groupRef), getDocs(collection(db, "users"))]);
 
-      if (!groupSnap.exists()) {
+      const baseData = (() => {
+        if (groupSnap.exists()) {
+          return groupSnap.data() as any;
+        }
+
+        if (isSeedCareGroup) {
+          return {
+            name: groupNameParam || DEFAULT_GROUP_NAME,
+            description: "",
+            leaderId: "",
+            leaderName: "",
+            leaderRole: "",
+            createdAt: Timestamp.now(),
+            isActive: false,
+            ministryType: "members",
+            members: [],
+            subgroups: [],
+          };
+        }
+
+        return null;
+      })();
+
+      if (!baseData) {
         setGroup(null);
         setUsers([]);
-        setLoading(false);
         return;
       }
 
-      const data = groupSnap.data() as any;
+      if (!groupSnap.exists() && isSeedCareGroup) {
+        await setDoc(
+          groupRef,
+          {
+            ...baseData,
+            isActive: false,
+            ministryType: String(baseData?.ministryType ?? "members").trim().toLowerCase(),
+          },
+          { merge: true }
+        );
+      }
+
+      const ministryScopeCandidates = normalizeIds([String(baseData?.name ?? ""), String(groupNameParam ?? ""), String(groupId ?? "")].map((x) => x.trim()));
+      const ministryMatchers = new Set(ministryScopeCandidates.map((x) => x.toLowerCase()));
+
+      const allUsersLookup = new Map(
+        usersSnap.docs.map((d) => {
+          const raw = d.data() as any;
+          return [
+            d.id,
+            {
+              id: d.id,
+              name: getMemberName(raw),
+              role: String(raw?.role ?? ""),
+              gender: String(raw?.gender ?? ""),
+              joinedGroups: [],
+              joinedText: "",
+            },
+          ];
+        })
+      );
 
       const userData: UserOption[] = usersSnap.docs
         .map((d) => {
           const raw = d.data() as any;
-          const subGroup = raw?.subGroup ?? {};
-          const ministryName = String(subGroup?.ministry?.groupName ?? "").trim();
-          const coreGroupName = String(subGroup?.coreGroup?.groupName ?? "").trim();
-          const joinedGroups = normalizeIds([ministryName, coreGroupName]);
+          const allMinistries = getUserMinistryNames(raw);
+          const joinedGroups = normalizeIds(allMinistries);
 
           return {
             id: d.id,
             name: getMemberName(raw),
             role: String(raw?.role ?? ""),
+            gender: String(raw?.gender ?? ""),
             joinedGroups,
             joinedText: joinedGroups.join(", "),
+            raw,
           };
         })
+        .filter((user: any) => userMatchesMinistry(user.raw, ministryMatchers))
+        .map(({ raw, ...user }: any) => user)
         .sort((a, b) => a.name.localeCompare(b.name));
+
+      const allMembersFromUsers: MemberCard[] = userData.map((user) => ({
+        id: user.id,
+        name: user.name,
+        gender: user.gender,
+        registered: true,
+      }));
 
       const userLookup = new Map(userData.map((u) => [u.id, u]));
 
-      const rawSubgroups = Array.isArray(data?.subgroups) ? data.subgroups : [];
+      const rawSubgroups = Array.isArray(baseData?.subgroups) ? baseData.subgroups : [];
       const parsedSubgroups: SubgroupItem[] = rawSubgroups.map((subgroup: any, index: number) => {
         const leaderId = String(subgroup?.leaderId ?? "");
-        const memberIds = normalizeIds(
-          Array.isArray(subgroup?.memberIds) ? subgroup.memberIds.map((x: any) => String(x)) : []
-        ).filter((id) => id !== leaderId && id !== String(data?.leaderId ?? ""));
+        const memberIds = normalizeIds(Array.isArray(subgroup?.memberIds) ? subgroup.memberIds.map((x: any) => String(x)) : []).filter(
+          (id) => id !== leaderId && id !== String(baseData?.leaderId ?? "")
+        );
 
         const storedMemberNames = Array.isArray(subgroup?.memberNames)
           ? subgroup.memberNames.map((x: any) => String(x)).filter(Boolean)
           : [];
 
         const memberNames = memberIds.map(
-          (memberId: string, memberIndex: number) =>
-            userLookup.get(memberId)?.name ?? storedMemberNames[memberIndex] ?? "Unnamed"
+          (memberId: string, memberIndex: number) => allUsersLookup.get(memberId)?.name ?? storedMemberNames[memberIndex] ?? "Unnamed"
         );
 
         return {
-          id: String(subgroup?.id ?? `${groupSnap.id}-${index}`),
+          id: String(subgroup?.id ?? `${groupId}-${index}`),
           name: String(subgroup?.name ?? `Group ${indexToLetters(index)}`),
           leaderId,
           leaderName: String(subgroup?.leaderName ?? ""),
@@ -229,43 +408,58 @@ export default function Members() {
       const subgroupMemberIds = normalizeIds(parsedSubgroups.flatMap((subgroup) => subgroup.memberIds ?? []));
       const subgroupLeaderIds = normalizeIds(parsedSubgroups.map((subgroup) => subgroup.leaderId ?? "").filter(Boolean));
 
-      const rawMembers = Array.isArray(data?.members) ? data.members : [];
+      const rawMembers = Array.isArray(baseData?.members) ? baseData.members : baseData?.memberId ? [baseData.memberId] : [];
       const directMemberIds = normalizeIds(rawMembers.map((item: any) => getAnyId(item))).filter(
-        (id) =>
-          id &&
-          id !== String(data?.leaderId ?? "") &&
-          !subgroupMemberIds.includes(id) &&
-          !subgroupLeaderIds.includes(id)
+        (id) => id && id !== String(baseData?.leaderId ?? "") && !subgroupMemberIds.includes(id) && !subgroupLeaderIds.includes(id)
       );
 
       const directMembers: MemberCard[] = directMemberIds.map((memberId) => ({
         id: memberId,
-        name: userLookup.get(memberId)?.name ?? "Unnamed",
-        registered: Boolean(userLookup.get(memberId)),
+        name: allUsersLookup.get(memberId)?.name ?? "Unnamed",
+        gender: allUsersLookup.get(memberId)?.gender,
+        registered: Boolean(allUsersLookup.get(memberId)),
       }));
 
       const parsedGroup: GroupItem = {
-        id: groupSnap.id,
-        kind: groupKind,
-        name: String(data?.name ?? groupNameParam ?? "").trim(),
-        description: String(data?.description ?? "").trim(),
-        leaderId: String(data?.leaderId ?? ""),
-        leaderName: String(data?.leaderName ?? ""),
-        leaderRole: String(data?.leaderRole ?? ""),
-        createdAt: data?.createdAt,
-        isActive: data?.isActive ?? true,
+        id: groupSnap.exists() ? groupSnap.id : groupId,
+        name: String(baseData?.name ?? groupNameParam ?? "").trim(),
+        description: String(baseData?.description ?? "").trim(),
+        leaderId: String(baseData?.leaderId ?? ""),
+        leaderName: String(baseData?.leaderName ?? ""),
+        leaderRole: String(baseData?.leaderRole ?? ""),
+        createdAt: baseData?.createdAt,
+        isActive: baseData?.isActive ?? false,
+        ministryType: String(baseData?.ministryType ?? "members").trim().toLowerCase(),
         members: directMembers,
         subgroups: parsedSubgroups,
       };
 
       setGroup(parsedGroup);
       setUsers(userData);
+
+      const allUsersData: UserOption[] = usersSnap.docs
+        .map((d) => {
+          const raw = d.data() as any;
+          const allMinistries = getUserMinistryNames(raw);
+          const joinedGroups = normalizeIds(allMinistries);
+          return {
+            id: d.id,
+            name: getMemberName(raw),
+            role: String(raw?.role ?? ""),
+            gender: String(raw?.gender ?? ""),
+            joinedGroups,
+            joinedText: joinedGroups.join(", "),
+            profileImageUrl: String(raw?.profileImageUrl ?? ""),
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setAllUsers(allUsersData);
     } catch (error) {
       Alert.alert("Error", `Failed to load members\n${getErrorMessage(error)}`);
     } finally {
       setLoading(false);
     }
-  }, [groupId, groupKind, groupNameParam]);
+  }, [groupId, groupNameParam, isSeedCareGroup]);
 
   useFocusEffect(
     useCallback(() => {
@@ -275,12 +469,17 @@ export default function Members() {
 
   const userMap = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
 
+  const allUsersMap = useMemo(() => new Map(allUsers.map((user) => [user.id, user])), [allUsers]);
+
+  const ministryType = String(group?.ministryType ?? "members").trim().toLowerCase();
+  const showMembersSection = ministryType === "members" || ministryType === "all" || !ministryType;
+  const showGroupsSection = ministryType === "groups" || ministryType === "all" || !ministryType;
+  const showStatusLabels = !Boolean(group?.isActive);
+  const showSummaryBoxes = !Boolean(group?.isActive);
+
   const uniqueMemberIds = useMemo(() => {
     if (!group) return [];
-    return normalizeIds([
-      ...group.members.map((member) => member.id),
-      ...group.subgroups.flatMap((subgroup) => subgroup.memberIds ?? []),
-    ]);
+    return normalizeIds([...group.members.map((member) => member.id), ...group.subgroups.flatMap((subgroup) => subgroup.memberIds ?? [])]);
   }, [group]);
 
   const subgroupBlocks = useMemo(() => {
@@ -288,11 +487,12 @@ export default function Members() {
 
     return group.subgroups.map((subgroup) => {
       const members: MemberCard[] = subgroup.memberIds.map((memberId, index) => {
-        const user = userMap.get(memberId);
+        const user = allUsersMap.get(memberId);
         return {
           id: memberId,
           name: user?.name ?? subgroup.memberNames[index] ?? "Unnamed",
-          registered: Boolean(user),
+          gender: user?.gender,
+          registered: Boolean(userMap.get(memberId)),
         };
       });
 
@@ -301,16 +501,17 @@ export default function Members() {
         members,
       };
     });
-  }, [group, userMap]);
+  }, [group, allUsersMap, userMap]);
 
   const directMemberBlocks = useMemo(() => {
     if (!group) return [];
     return group.members.map((member) => ({
       ...member,
-      name: userMap.get(member.id)?.name ?? member.name ?? "Unnamed",
+      name: allUsersMap.get(member.id)?.name ?? member.name ?? "Unnamed",
+      gender: allUsersMap.get(member.id)?.gender,
       registered: Boolean(userMap.get(member.id)) || member.registered,
     }));
-  }, [group, userMap]);
+  }, [group, allUsersMap, userMap]);
 
   const registeredCount = useMemo(() => {
     return uniqueMemberIds.filter((id) => userMap.has(id)).length;
@@ -320,13 +521,8 @@ export default function Members() {
     return uniqueMemberIds.filter((id) => !userMap.has(id)).length;
   }, [uniqueMemberIds, userMap]);
 
-  const activeSubgroup = useMemo(() => {
-    if (targetSubgroupIndex === null || !group) return null;
-    return group.subgroups[targetSubgroupIndex] ?? null;
-  }, [group, targetSubgroupIndex]);
-
   const getBlockedIds = useCallback(
-    (excludeSubgroupIndex: number | null) => {
+    (excludeSubgroupIndex: number | null, isDirect: boolean = false) => {
       const ids = new Set<string>();
 
       if (group?.leaderId) {
@@ -335,24 +531,99 @@ export default function Members() {
 
       if (!group) return ids;
 
-      group.members.forEach((member) => {
-        if (member.id) ids.add(member.id);
-      });
+      if (isDirect) {
+        group.members.forEach((member) => {
+          if (member.id) ids.add(member.id);
+        });
+      } else {
+        group.subgroups.forEach((subgroup, index) => {
+          if (subgroup.leaderId) {
+            ids.add(subgroup.leaderId);
+          }
 
-      group.subgroups.forEach((subgroup, index) => {
-        if (subgroup.leaderId) {
-          ids.add(subgroup.leaderId);
-        }
-
-        if (excludeSubgroupIndex === null || index !== excludeSubgroupIndex) {
-          subgroup.memberIds.forEach((memberId) => ids.add(memberId));
-        }
-      });
+          if (excludeSubgroupIndex === null || index !== excludeSubgroupIndex) {
+            subgroup.memberIds.forEach((memberId) => ids.add(memberId));
+          }
+        });
+      }
 
       return ids;
     },
     [group]
   );
+
+  const modal = useModalFunctions({
+    group,
+    users,
+    loadData,
+    getBlockedIds,
+    groupId,
+    groupNameParam,
+    setSavingAction,
+  });
+
+  const {
+    showNewSubgroupModal,
+    setShowNewSubgroupModal,
+    showAddMembersModal,
+    setShowAddMembersModal,
+    showUserPickerModal,
+    setShowUserPickerModal,
+    showEditGroupModal,
+    setShowEditGroupModal,
+    showDeleteConfirmModal,
+    setShowDeleteConfirmModal,
+    newSubgroupLeaderId,
+    setNewSubgroupLeaderId,
+    newSubgroupMemberIds,
+    setNewSubgroupMemberIds,
+    targetSubgroupIndex,
+    setTargetSubgroupIndex,
+    memberSelectionIds,
+    setMemberSelectionIds,
+    editSubgroupLeaderId,
+    setEditSubgroupLeaderId,
+    deleteConfirmIndex,
+    setDeleteConfirmIndex,
+    editName,
+    setEditName,
+    editDescription,
+    setEditDescription,
+    editLeaderId,
+    setEditLeaderId,
+    pickerMode,
+    setPickerMode,
+    pickerTargetIndex,
+    setPickerTargetIndex,
+    pickerSearch,
+    setPickerSearch,
+    pickerSelectedIds,
+    setPickerSelectedIds,
+    editPickerMode,
+    setEditPickerMode,
+    openCreateSubgroupModal,
+    closeNewSubgroupModal,
+    openAddMembersModal,
+    closeAddMembersModal,
+    openEditGroupModal,
+    closeEditGroupModal,
+    openUserPicker,
+    closeUserPicker,
+    togglePickerUser,
+    confirmUserPicker,
+    openEditSubgroupLeaderPicker,
+    openEditLeaderPicker,
+    createSubgroup,
+    saveMembersToSubgroup,
+    saveEditGroup,
+    deleteSelectedSubgroup,
+    confirmDelete,
+  } = modal;
+
+  const activeSubgroup = useMemo(() => {
+    if (targetSubgroupIndex === null || !group) return null;
+    return group.subgroups[targetSubgroupIndex] ?? null;
+  }, [group, targetSubgroupIndex]);
 
   const filteredUsers = useMemo(() => {
     const q = pickerSearch.toLowerCase().trim();
@@ -360,14 +631,44 @@ export default function Members() {
     return users.filter((u) => `${u.name} ${u.role} ${u.joinedText}`.toLowerCase().includes(q));
   }, [users, pickerSearch]);
 
+  const columns = isLandscape ? 4 : 2;
+  const gap = isLandscape ? 8 : 12;
+
+  const itemSize = useMemo(() => {
+    if (!contentWidth) return 0;
+    const availableWidth = contentWidth - gap * (columns - 1);
+    return Math.floor(availableWidth / columns);
+  }, [contentWidth, columns, gap]);
+
+  const leaderTileWidth = useMemo(() => {
+    if (isLandscape) {
+      return Math.min(150, Math.floor((contentWidth || width) * 0.2));
+    }
+    return Math.min(180, Math.floor((contentWidth || width) * 0.48));
+  }, [contentWidth, isLandscape, width]);
+
+  const tileWidthStyle = useMemo(
+    () => ({
+      width: itemSize || Math.floor(width * 0.48 - gap),
+    }),
+    [itemSize, width, gap]
+  );
+
+  const leaderWidthStyle = useMemo(
+    () => ({
+      width: leaderTileWidth,
+    }),
+    [leaderTileWidth]
+  );
+
   const openMember = (memberId: string) => {
     router.push({
       pathname: "/admin/member",
       params: {
         memberId,
         groupId,
-        groupKind,
         groupName: group?.name ?? groupNameParam,
+        hideRoleAndMinistries: "true",
       },
     });
   };
@@ -412,512 +713,6 @@ export default function Members() {
     setShowSubgroupMenu(true);
   };
 
-  const openCreateSubgroupModal = () => {
-    setNewSubgroupLeaderId("");
-    setNewSubgroupMemberIds([]);
-    setShowNewSubgroupModal(true);
-  };
-
-  const openAddDirectMembersModal = () => {
-    if (!group) return;
-    setDirectMemberIds(group.members.map((member) => member.id));
-    setShowAddDirectMembersModal(true);
-  };
-
-  const openAddMembersModal = (subgroupIndex: number) => {
-    if (!group) return;
-    setTargetSubgroupIndex(subgroupIndex);
-    setEditSubgroupLeaderId(group.subgroups[subgroupIndex]?.leaderId ?? "");
-    setMemberSelectionIds(normalizeIds(group.subgroups[subgroupIndex]?.memberIds ?? []));
-    setShowAddMembersModal(true);
-  };
-
-  const closeNewSubgroupModal = () => {
-    setShowNewSubgroupModal(false);
-    setPickerSearch("");
-    setPickerSelectedIds([]);
-    setPickerTargetIndex(null);
-  };
-
-  const closeAddMembersModal = () => {
-    setShowAddMembersModal(false);
-    setPickerSearch("");
-    setPickerSelectedIds([]);
-    setPickerTargetIndex(null);
-    setTargetSubgroupIndex(null);
-    setEditSubgroupLeaderId("");
-  };
-
-  const closeAddDirectMembersModal = () => {
-    setShowAddDirectMembersModal(false);
-    setPickerSearch("");
-    setPickerSelectedIds([]);
-    setPickerTargetIndex(null);
-  };
-
-  const openEditSubgroupLeaderPicker = () => {
-    setEditPickerMode(true);
-    setPickerMode("newSubgroupLeader");
-    setPickerSearch("");
-    setPickerSelectedIds(editSubgroupLeaderId ? [editSubgroupLeaderId] : []);
-    setPickerTargetIndex(targetSubgroupIndex);
-    setShowUserPickerModal(true);
-  };
-
-  const confirmEditSubgroupLeader = () => {
-    const chosenIds = normalizeIds(pickerSelectedIds);
-    const chosenId = chosenIds[0] ?? "";
-    if (!chosenId) return Alert.alert("Error", "Please select a leader");
-    setEditSubgroupLeaderId(chosenId);
-    setShowUserPickerModal(false);
-    setPickerSearch("");
-  };
-
-  const closeUserPicker = () => {
-    setShowUserPickerModal(false);
-    setPickerSearch("");
-    setPickerTargetIndex(null);
-    if (editPickerMode) {
-      setEditPickerMode(false);
-    }
-  };
-
-  const openEditGroupModal = () => {
-    if (!group) return;
-    setEditName(group.name);
-    setEditDescription(group.description ?? "");
-    setEditLeaderId(group.leaderId ?? "");
-    setShowEditGroupModal(true);
-  };
-
-  const closeEditGroupModal = () => {
-    setShowEditGroupModal(false);
-    setEditName("");
-    setEditDescription("");
-    setEditLeaderId("");
-    setEditPickerMode(false);
-  };
-
-  const openEditLeaderPicker = () => {
-    setEditPickerMode(true);
-    setPickerMode("newSubgroupLeader");
-    setPickerSearch("");
-    setPickerSelectedIds(editLeaderId ? [editLeaderId] : []);
-    setShowUserPickerModal(true);
-  };
-
-  const confirmEditLeaderPicker = () => {
-    const chosenIds = normalizeIds(pickerSelectedIds);
-    const chosenId = chosenIds[0] ?? "";
-    if (!chosenId) return Alert.alert("Error", "Please select a leader");
-    setEditLeaderId(chosenId);
-    setShowUserPickerModal(false);
-    setPickerSearch("");
-    setEditPickerMode(false);
-  };
-
-  const saveEditGroup = async () => {
-    if (!group) return;
-
-    const name = editName.trim();
-    const description = editDescription.trim();
-    const leaderId = editLeaderId.trim();
-
-    if (!name) {
-      return Alert.alert("Error", "Please enter a group name");
-    }
-
-    if (!leaderId) {
-      return Alert.alert("Error", "Please select a leader");
-    }
-
-    const leader = users.find((u) => u.id === leaderId);
-    if (!leader) return Alert.alert("Error", "Selected leader not found");
-
-    const groupRef = doc(db, getCollectionName(groupKind), group.id);
-
-    setSavingAction(true);
-    try {
-      await updateDoc(groupRef, {
-        name,
-        description,
-        leaderId: leader.id,
-        leaderName: leader.name,
-        leaderRole: leader.role,
-        updatedAt: Timestamp.now(),
-      });
-
-      closeEditGroupModal();
-      await loadData();
-    } catch (error) {
-      Alert.alert("Error", `Failed to update group\n${getErrorMessage(error)}`);
-    } finally {
-      setSavingAction(false);
-    }
-  };
-
-  const openUserPicker = (mode: PickerMode, subgroupIndex: number | null = null) => {
-    setEditPickerMode(false);
-    setPickerMode(mode);
-    setPickerTargetIndex(subgroupIndex);
-    setPickerSearch("");
-
-    if (mode === "newSubgroupLeader") {
-      setPickerSelectedIds(newSubgroupLeaderId ? [newSubgroupLeaderId] : []);
-    } else if (mode === "newSubgroupMembers") {
-      setPickerSelectedIds(newSubgroupMemberIds);
-    } else if (mode === "existingSubgroupMembers") {
-      setPickerSelectedIds(memberSelectionIds);
-    } else if (mode === "directMembers") {
-      setPickerSelectedIds(directMemberIds);
-    } else {
-      setPickerSelectedIds([]);
-    }
-
-    setShowUserPickerModal(true);
-  };
-
-  const confirmUserPicker = () => {
-    const chosenIds = normalizeIds(pickerSelectedIds);
-
-    if (editPickerMode) {
-      if (targetSubgroupIndex !== null) {
-        confirmEditSubgroupLeader();
-        return;
-      } else {
-        confirmEditLeaderPicker();
-        return;
-      }
-    }
-
-    if (pickerMode === "newSubgroupLeader") {
-      const chosenId = chosenIds[0] ?? "";
-      if (!chosenId) return Alert.alert("Error", "Please select a subgroup leader");
-      setNewSubgroupLeaderId(chosenId);
-      closeUserPicker();
-      return;
-    }
-
-    if (pickerMode === "newSubgroupMembers") {
-      if (chosenIds.length === 0) return Alert.alert("Error", "Please select members");
-      const blocked = getBlockedIds(null);
-      const allowed = chosenIds.filter((id) => !blocked.has(id));
-      setNewSubgroupMemberIds(allowed);
-      closeUserPicker();
-      return;
-    }
-
-    if (pickerMode === "existingSubgroupMembers") {
-      if (targetSubgroupIndex === null) return;
-      const blocked = getBlockedIds(targetSubgroupIndex);
-      const allowed = chosenIds.filter((id) => !blocked.has(id) || memberSelectionIds.includes(id));
-      setMemberSelectionIds(allowed);
-      closeUserPicker();
-      return;
-    }
-
-    if (pickerMode === "directMembers") {
-      if (chosenIds.length === 0) return Alert.alert("Error", "Please select members");
-      const blocked = getBlockedIds(null);
-      const allowed = chosenIds.filter((id) => !blocked.has(id) || directMemberIds.includes(id));
-      setDirectMemberIds(allowed);
-      closeUserPicker();
-    }
-  };
-
-  const togglePickerUser = (userId: string) => {
-    if (pickerMode === "newSubgroupLeader") {
-      setPickerSelectedIds([userId]);
-      return;
-    }
-
-    if (pickerSelectedIds.includes(userId)) {
-      setPickerSelectedIds((prev) => prev.filter((id) => id !== userId));
-    } else {
-      setPickerSelectedIds((prev) => [...prev, userId]);
-    }
-  };
-
-  const getCurrentAssignments = useCallback(
-    (nextMembers: MemberCard[], subgroups: SubgroupItem[]) => {
-      const nextAssignments = new Map<string, SubGroupAssignment>();
-
-      nextMembers.forEach((member) => {
-        nextAssignments.set(member.id, {
-          groupId,
-          groupName: group?.name ?? groupNameParam,
-          subgroupId: "__members__",
-          subgroupName: "Members",
-          leaderId: group?.leaderId ?? "",
-          leaderName: group?.leaderName ?? "",
-          leaderRole: group?.leaderRole ?? "",
-        });
-      });
-
-      subgroups.forEach((subgroup) => {
-        subgroup.memberIds.forEach((memberId) => {
-          nextAssignments.set(memberId, {
-            groupId,
-            groupName: group?.name ?? groupNameParam,
-            subgroupId: subgroup.id,
-            subgroupName: subgroup.name,
-            leaderId: subgroup.leaderId ?? "",
-            leaderName: subgroup.leaderName ?? "",
-            leaderRole: subgroup.leaderRole ?? "",
-          });
-        });
-      });
-
-      return nextAssignments;
-    },
-    [group, groupNameParam, groupId]
-  );
-
-  const saveAssignments = useCallback(
-    async (
-      nextMembers: MemberCard[],
-      nextSubgroups: SubgroupItem[],
-      previousMembers: MemberCard[],
-      previousSubgroups: SubgroupItem[]
-    ) => {
-      const nextAssignments = getCurrentAssignments(nextMembers, nextSubgroups);
-      const previousMemberIds = normalizeIds([
-        ...previousMembers.map((member) => member.id),
-        ...previousSubgroups.flatMap((subgroup) => subgroup.memberIds ?? []),
-      ]);
-
-      const batch = writeBatch(db);
-
-      for (const userId of previousMemberIds) {
-        if (!nextAssignments.has(userId)) {
-          batch.set(
-            doc(db, "users", userId),
-            {
-              subGroup: {
-                [groupKind]: deleteField(),
-              },
-            },
-            { merge: true }
-          );
-        }
-      }
-
-      for (const [userId, assignment] of nextAssignments.entries()) {
-        batch.set(
-          doc(db, "users", userId),
-          {
-            subGroup: {
-              [groupKind]: assignment,
-            },
-          },
-          { merge: true }
-        );
-      }
-
-      await batch.commit();
-    },
-    [getCurrentAssignments, groupKind]
-  );
-
-  const persistGroupData = useCallback(
-    async (nextMembers: MemberCard[], nextSubgroups: SubgroupItem[]) => {
-      if (!group) return;
-
-      const groupRef = doc(db, getCollectionName(groupKind), group.id);
-
-      await updateDoc(groupRef, {
-        members: nextMembers.map((member) => member.id),
-        subgroups: nextSubgroups,
-        updatedAt: Timestamp.now(),
-      });
-
-      await saveAssignments(nextMembers, nextSubgroups, group.members, group.subgroups);
-    },
-    [group, groupKind, saveAssignments]
-  );
-
-  const createSubgroup = async () => {
-    if (!group) return;
-
-    const leaderId = newSubgroupLeaderId.trim();
-    const memberIds = normalizeIds(newSubgroupMemberIds);
-
-    if (!leaderId) {
-      return Alert.alert("Error", "Please select a subgroup leader");
-    }
-
-    if (memberIds.length === 0) {
-      return Alert.alert("Error", "Please select members");
-    }
-
-    const blocked = getBlockedIds(null);
-
-    if (blocked.has(leaderId)) {
-      return Alert.alert("Error", "Selected leader is already used in this group");
-    }
-
-    const invalidMember = memberIds.find((id) => blocked.has(id));
-    if (invalidMember) {
-      return Alert.alert("Error", "One or more selected members are already used in this group");
-    }
-
-    if (memberIds.includes(leaderId)) {
-      return Alert.alert("Error", "Leader cannot also be a member of the same subgroup");
-    }
-
-    const leader = users.find((u) => u.id === leaderId);
-    if (!leader) return Alert.alert("Error", "Selected leader not found");
-
-    const selectedMembers = memberIds
-      .map((memberId) => users.find((u) => u.id === memberId))
-      .filter((x): x is UserOption => Boolean(x));
-
-    const newSubgroup: SubgroupItem = {
-      id: makeLocalId(),
-      name: `Group ${indexToLetters(group.subgroups.length)}`,
-      leaderId: leader.id,
-      leaderName: leader.name,
-      leaderRole: leader.role,
-      memberIds,
-      memberNames: selectedMembers.map((member) => member.name),
-    };
-
-    const nextSubgroups = [...group.subgroups, newSubgroup];
-
-    setSavingAction(true);
-    try {
-      await persistGroupData(group.members, nextSubgroups);
-      closeNewSubgroupModal();
-      await loadData();
-    } catch (error) {
-      Alert.alert("Error", `Failed to add subgroup\n${getErrorMessage(error)}`);
-    } finally {
-      setSavingAction(false);
-    }
-  };
-
-  const saveDirectMembers = async () => {
-    if (!group) return;
-
-    const blocked = getBlockedIds(null);
-    const memberIds = normalizeIds(directMemberIds).filter(
-      (id) => !blocked.has(id) || group.members.some((member) => member.id === id)
-    );
-
-    if (memberIds.length === 0) {
-      return Alert.alert("Error", "Please select members");
-    }
-
-    const selectedMembers = memberIds
-      .map((memberId) => users.find((u) => u.id === memberId))
-      .filter((x): x is UserOption => Boolean(x));
-
-    const nextMembers: MemberCard[] = selectedMembers.map((member) => ({
-      id: member.id,
-      name: member.name,
-      registered: true,
-    }));
-
-    setSavingAction(true);
-    try {
-      await persistGroupData(nextMembers, group.subgroups);
-      closeAddDirectMembersModal();
-      await loadData();
-    } catch (error) {
-      Alert.alert("Error", `Failed to add members\n${getErrorMessage(error)}`);
-    } finally {
-      setSavingAction(false);
-    }
-  };
-
-  const saveMembersToSubgroup = async () => {
-    if (!group || targetSubgroupIndex === null) return;
-
-    const target = group.subgroups[targetSubgroupIndex];
-    if (!target) return;
-
-    const newLeaderId = editSubgroupLeaderId.trim();
-    if (!newLeaderId) {
-      return Alert.alert("Error", "Please select a leader");
-    }
-
-    const leader = users.find((u) => u.id === newLeaderId);
-    if (!leader) return Alert.alert("Error", "Selected leader not found");
-
-    const blocked = getBlockedIds(targetSubgroupIndex);
-    const selectedIds = normalizeIds(memberSelectionIds).filter((id) => !blocked.has(id) && id !== newLeaderId);
-
-    const nextMemberIds = selectedIds.filter((id) => id !== group.leaderId);
-
-    if (nextMemberIds.length === 0) {
-      return Alert.alert("Error", "Please select members");
-    }
-
-    const nextSubgroup: SubgroupItem = {
-      ...target,
-      leaderId: leader.id,
-      leaderName: leader.name,
-      leaderRole: leader.role,
-      memberIds: nextMemberIds,
-      memberNames: nextMemberIds.map((memberId) => users.find((u) => u.id === memberId)?.name ?? "Unnamed"),
-    };
-
-    const nextSubgroups = group.subgroups.map((subgroup, index) =>
-      index === targetSubgroupIndex ? nextSubgroup : subgroup
-    );
-
-    setSavingAction(true);
-    try {
-      await persistGroupData(group.members, nextSubgroups);
-      closeAddMembersModal();
-      await loadData();
-    } catch (error) {
-      Alert.alert("Error", `Failed to update members\n${getErrorMessage(error)}`);
-    } finally {
-      setSavingAction(false);
-    }
-  };
-
-  const deleteSelectedSubgroup = async (index: number) => {
-    console.log('deleteSelectedSubgroup called with index:', index);
-    if (!group) {
-      console.log('No group, returning');
-      return;
-    }
-    const target = group.subgroups[index];
-    if (!target) {
-      console.log('No target subgroup at index', index);
-      return;
-    }
-
-    console.log('Showing delete confirmation for:', target.name);
-    setDeleteConfirmIndex(index);
-    setShowDeleteConfirmModal(true);
-  };
-
-  const confirmDelete = async () => {
-    if (deleteConfirmIndex === null || !group) return;
-    const target = group.subgroups[deleteConfirmIndex];
-    if (!target) return;
-
-    setShowDeleteConfirmModal(false);
-    console.log('Confirming delete for:', target.name);
-    setSavingAction(true);
-    try {
-      const nextSubgroups = group.subgroups.filter((_, i) => i !== deleteConfirmIndex);
-      console.log('Deleting subgroup, new count:', nextSubgroups.length);
-      await persistGroupData(group.members, nextSubgroups);
-      await loadData();
-      console.log('Delete successful');
-    } catch (error) {
-      console.error('Delete failed:', error);
-      Alert.alert("Error", `Failed to delete group\n${getErrorMessage(error)}`);
-    } finally {
-      setSavingAction(false);
-      setDeleteConfirmIndex(null);
-    }
-  };
-
   const selectedPickerTitle =
     pickerMode === "newSubgroupLeader"
       ? "Select Subgroup Leader"
@@ -928,10 +723,12 @@ export default function Members() {
           : `Select Members for ${activeSubgroup?.name ?? "Subgroup"}`;
 
   const pickerBlockedIds = useMemo(() => {
-    if (pickerMode === "existingSubgroupMembers") {
-      return getBlockedIds(pickerTargetIndex);
+    if (pickerMode === "directMembers") {
+      return getBlockedIds(null, true);
+    } else if (pickerMode === "existingSubgroupMembers") {
+      return getBlockedIds(pickerTargetIndex, false);
     }
-    return getBlockedIds(null);
+    return getBlockedIds(null, false);
   }, [getBlockedIds, pickerMode, pickerTargetIndex]);
 
   const pickerSelectedUsers = useMemo(
@@ -963,194 +760,211 @@ export default function Members() {
 
   const totalMembers = uniqueMemberIds.length;
   const leaderName = group.leaderName || "Not set";
+  const leaderGender = allUsersMap.get(group.leaderId ?? "")?.gender;
+  const leaderProfileImageUrl = allUsersMap.get(group.leaderId ?? "")?.profileImageUrl;
+  const compactTiles = isLandscape;
+  const horizontalSafeSpace = isLandscape ? 28 : 20;
+  const innerMaxWidth = isLandscape ? 980 : 980;
 
   return (
-    <View className="flex-1 bg-[#F7F8FA]">
-      <ScrollView className="flex-1" contentContainerClassName="px-5 pt-5 pb-[100px]" showsVerticalScrollIndicator={false}>
-        <View className="mb-4 flex-row items-start justify-between gap-3">
-          <View className="flex-1">
-            <Text className="text-2xl font-extrabold text-gray-900">{group.name}</Text>
-            {!!group.description && <Text className="mt-1 text-[14px] leading-5 text-gray-600">{group.description}</Text>}
-          </View>
-          <Pressable onPress={openEditGroupModal} className="h-10 w-10 items-center justify-center rounded-full bg-gray-100">
-            <Ionicons name="pencil" size={22} color="#111827" />
-          </Pressable>
-        </View>
-
-        <View className="flex-row gap-2">
-          <View className="flex-1 items-center rounded-[18px] border border-blue-100 bg-blue-50 p-4">
-            <Text className="text-center text-[13px] font-extrabold text-blue-700">All Members</Text>
-            <Text className="mt-2 text-center text-[28px] font-extrabold text-gray-900">{totalMembers}</Text>
-          </View>
-
-          <View className="flex-1 items-center rounded-[18px] border border-emerald-100 bg-emerald-50 p-4">
-            <Text className="text-center text-[13px] font-extrabold text-emerald-700">Registered</Text>
-            <Text className="mt-2 text-center text-[28px] font-extrabold text-gray-900">{registeredCount}</Text>
-          </View>
-
-          <View className="flex-1 items-center rounded-[18px] border border-amber-100 bg-amber-50 p-4">
-            <Text className="text-center text-[13px] font-extrabold text-amber-700">Unregistered</Text>
-            <Text className="mt-2 text-center text-[28px] font-extrabold text-gray-900">{unregisteredCount}</Text>
-          </View>
-        </View>
-
-        <View className="mt-5 rounded-[18px] border border-gray-200 bg-white p-4">
-          <View className="flex-row items-start gap-3">
-            <View className="h-12 w-12 items-center justify-center rounded-2xl bg-gray-900">
-              <Ionicons name="person-circle-outline" size={28} color="white" />
-            </View>
-
+    <>
+      <ScrollView className="flex-1 bg-[#F7F8FA]" scrollEnabled={true}>
+        <View
+          className="flex-1"
+          style={{
+            paddingHorizontal: horizontalSafeSpace,
+            paddingTop: isLandscape ? 18 : 24,
+            paddingBottom: 40,
+          }}
+        >
+          <View
+            className="flex-1 self-center"
+            style={{
+              width: "100%",
+              maxWidth: innerMaxWidth,
+            }}
+            onLayout={(event) => {
+              setContentWidth(event.nativeEvent.layout.width);
+            }}
+          >
             <View className="flex-1">
-              <Text className="text-[13px] font-bold uppercase tracking-[1px] text-gray-500">Head Ministry</Text>
-              <Text className="mt-0.5 text-[18px] font-extrabold text-gray-900">{leaderName}</Text>
-            </View>
-          </View>
-        </View>
-
-        <View className="mt-5">
-          <View className="mb-3 flex-row items-center justify-between">
-            <Text className="text-[16px] font-extrabold text-gray-900">Members</Text>
-            <View className="flex-row items-center gap-2">
-              <Text className="text-[13px] font-semibold text-gray-500">{directMemberBlocks.length} items</Text>
-              <Pressable onPress={openAddDirectMembersModal} className="h-9 w-9 items-center justify-center rounded-full bg-gray-100">
-                <Ionicons name="add" size={22} color="#111827" />
-              </Pressable>
-            </View>
-          </View>
-
-          {directMemberBlocks.length > 0 ? (
-            <View className="flex-row flex-wrap justify-between gap-y-3">
-              {directMemberBlocks.map((member) => (
-                <Pressable
-                  key={member.id}
-                  onPress={() => openMember(member.id)}
-                  className="w-[48.5%] rounded-[16px] border border-gray-200 bg-white p-3"
-                >
-                  <View className="flex-row items-start gap-3">
-                    <View className="h-11 w-11 items-center justify-center rounded-2xl bg-gray-100">
-                      <Ionicons name="person" size={20} color="#6B7280" />
-                    </View>
-
-                    <View className="flex-1">
-                      <Text numberOfLines={2} className="text-[15px] font-extrabold text-gray-900">
-                        {member.name}
-                      </Text>
-
-                      <View className="mt-2 flex-row items-center gap-1.5">
-                        <Ionicons
-                          name={member.registered ? "checkmark-circle" : "alert-circle"}
-                          size={14}
-                          color={member.registered ? "#16A34A" : "#D97706"}
-                        />
-                        <Text className={`text-[12px] font-bold ${member.registered ? "text-emerald-600" : "text-amber-600"}`}>
-                          {member.registered ? "Registered" : "Unregistered"}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
+              <View className="mb-4 flex-row items-start justify-between gap-3">
+                <View className="flex-1">
+                  <Text className="text-2xl font-extrabold text-gray-900">{group.name}</Text>
+                  {!!group.description && <Text className="mt-1 text-[14px] leading-5 text-gray-600">{group.description}</Text>}
+                </View>
+                <Pressable onPress={openEditGroupModal} className="h-10 w-10 items-center justify-center rounded-full bg-gray-100">
+                  <Ionicons name="pencil" size={22} color="#111827" />
                 </Pressable>
-              ))}
-            </View>
-          ) : (
-            <View className="rounded-[18px] border border-dashed border-gray-300 bg-white p-6">
-              <Text className="text-center text-gray-500">No members found</Text>
-            </View>
-          )}
-        </View>
+              </View>
 
-        <View className="mt-5">
-          <View className="mb-3 flex-row items-center justify-between">
-            <Text className="text-[16px] font-extrabold text-gray-900">Groups</Text>
-            <View className="flex-row items-center gap-2">
-              <Text className="text-[13px] font-semibold text-gray-500">{subgroupBlocks.length} items</Text>
-              <Pressable onPress={openCreateSubgroupModal} className="h-9 w-9 items-center justify-center rounded-full bg-gray-100">
-                <Ionicons name="add" size={22} color="#111827" />
-              </Pressable>
+              {showSummaryBoxes ? (
+                <View className="flex-row gap-2">
+                  <View className="flex-1 items-center rounded-[18px] border border-blue-100 bg-blue-50 p-3">
+                    <Text className="text-center text-[12px] font-extrabold text-blue-700">All Members</Text>
+                    <Text className="mt-1.5 text-center text-[22px] font-extrabold text-gray-900">{totalMembers}</Text>
+                  </View>
+
+                  <View className="flex-1 items-center rounded-[18px] border border-emerald-100 bg-emerald-50 p-3">
+                    <Text className="text-center text-[12px] font-extrabold text-emerald-700">Registered</Text>
+                    <Text className="mt-1.5 text-center text-[22px] font-extrabold text-gray-900">{registeredCount}</Text>
+                  </View>
+
+                  <View className="flex-1 items-center rounded-[18px] border border-amber-100 bg-amber-50 p-3">
+                    <Text className="text-center text-[12px] font-extrabold text-amber-700">Unregistered</Text>
+                    <Text className="mt-1.5 text-center text-[22px] font-extrabold text-gray-900">{unregisteredCount}</Text>
+                  </View>
+                </View>
+              ) : null}
+
+              <View className="mt-5 rounded-[18px] border border-gray-200 bg-white p-4">
+                <View className="items-center">
+                  <Text className="text-[13px] font-bold uppercase tracking-[1px] text-gray-500">Head Ministry</Text>
+                  <View className="mt-3" style={[leaderWidthStyle, { maxWidth: compactTiles ? 152 : 180 }]}>
+                    <SquarePersonTile
+                      name={leaderName}
+                      gender={leaderGender}
+                      registered={Boolean(group?.leaderId && userMap.has(group.leaderId))}
+                      showStatus={false}
+                      onPress={group.leaderId ? () => openMember(group.leaderId as string) : undefined}
+                      compact={compactTiles}
+                      profileImageUrl={leaderProfileImageUrl}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {showMembersSection ? (
+                <View className="mt-5">
+                  <View className="mb-3 flex-row items-center justify-between">
+                    <Text className="text-[16px] font-extrabold text-gray-900">Members</Text>
+                    <View className="flex-row items-center gap-2">
+                      <Text className="text-[13px] font-semibold text-gray-500">{directMemberBlocks.length} items</Text>
+                    </View>
+                  </View>
+
+                  {directMemberBlocks.length > 0 ? (
+                    <View
+                      className="flex-row flex-wrap justify-start"
+                      style={{
+                        rowGap: gap,
+                        columnGap: gap,
+                        justifyContent: "flex-start",
+                      }}
+                    >
+                      {directMemberBlocks.map((member) => (
+                        <View key={member.id} style={tileWidthStyle}>
+                          <SquarePersonTile
+                            name={member.name}
+                            gender={member.gender}
+                            registered={member.registered}
+                            showStatus={showStatusLabels}
+                            onPress={() => openMember(member.id)}
+                            compact={compactTiles}
+                          />
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <View className="rounded-[18px] border border-dashed border-gray-300 bg-white p-6">
+                      <Text className="text-center text-gray-500">No members found</Text>
+                    </View>
+                  )}
+                </View>
+              ) : null}
+
+              {showGroupsSection ? (
+                <View className="mt-5">
+                  <View className="mb-3 flex-row items-center justify-between">
+                    <Text className="text-[16px] font-extrabold text-gray-900">Groups</Text>
+                    <View className="flex-row items-center gap-2">
+                      <Text className="text-[13px] font-semibold text-gray-500">{subgroupBlocks.length} items</Text>
+                      <Pressable onPress={openCreateSubgroupModal} className="h-9 w-9 items-center justify-center rounded-full bg-gray-100">
+                        <Ionicons name="add" size={22} color="#111827" />
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  {subgroupBlocks.length === 0 ? (
+                    <View className="rounded-[18px] border border-dashed border-gray-300 bg-white p-6">
+                      <Text className="text-center text-gray-500">No groups found</Text>
+                    </View>
+                  ) : (
+                    <View className="gap-3">
+                      {subgroupBlocks.map((subgroup, subgroupIndex) => {
+                        return (
+                          <View key={subgroup.id} className="rounded-[18px] border border-gray-200 bg-white p-4" style={{ overflow: "visible" }}>
+                            <View className="mb-3 flex-row items-center justify-between gap-2" style={{ zIndex: 100 }}>
+                              <Text className="flex-1 text-[14px] font-bold text-gray-900">{subgroup.name || `Group ${subgroupIndex + 1}`}</Text>
+                              <Pressable onPress={() => setSubgroupMenuTargetIndex(subgroupMenuTargetIndex === subgroupIndex ? null : subgroupIndex)} className="h-8 w-8 items-center justify-center rounded-full bg-gray-100">
+                                <Ionicons name="ellipsis-vertical" size={18} color="#111827" />
+                              </Pressable>
+                              {subgroupMenuTargetIndex === subgroupIndex && (
+                                <View className="absolute right-0 top-10 z-50 rounded-lg border border-gray-200 bg-white shadow-lg" style={{ pointerEvents: "auto" }}>
+                                  <Pressable onPress={() => { setSubgroupMenuTargetIndex(null); setTargetSubgroupIndex(subgroupIndex); openAddMembersModal(subgroupIndex); }} style={{ pointerEvents: "auto" }} className="flex-row items-center gap-2 border-b border-gray-200 px-4 py-3">
+                                    <Ionicons name="create" size={16} color="#111827" />
+                                    <Text className="text-[13px] font-semibold text-gray-900">Edit</Text>
+                                  </Pressable>
+                                  <Pressable onPress={() => { setSubgroupMenuTargetIndex(null); setDeleteConfirmIndex(subgroupIndex); setShowDeleteConfirmModal(true); }} style={{ pointerEvents: "auto" }} className="flex-row items-center gap-2 px-4 py-3">
+                                    <Ionicons name="trash" size={16} color="#DC2626" />
+                                    <Text className="text-[13px] font-semibold text-red-600">Delete</Text>
+                                  </Pressable>
+                                </View>
+                              )}
+                            </View>
+                            <View className="items-center">
+                              <Text className="text-[13px] font-bold uppercase tracking-[1px] text-gray-500">Leader</Text>
+                              <View className="mt-3" style={[leaderWidthStyle, { maxWidth: compactTiles ? 152 : 180 }]}>
+                                <SquarePersonTile
+                                  name={subgroup.leaderName || "Not set"}
+                                  registered={Boolean(subgroup.leaderId && userMap.has(subgroup.leaderId))}
+                                  showStatus={showStatusLabels}
+                                  onPress={subgroup.leaderId ? () => openMember(subgroup.leaderId as string) : undefined}
+                                  compact={compactTiles}
+                                />
+                              </View>
+                            </View>
+
+                            <View className="my-4 h-px bg-gray-200" />
+
+                            <View
+                              className="flex-row flex-wrap justify-start"
+                              style={{
+                                rowGap: gap,
+                                columnGap: gap,
+                                justifyContent: "flex-start",
+                              }}
+                            >
+                              {subgroup.members.length === 0 ? (
+                                <Text className="text-gray-500">No members in this subgroup</Text>
+                              ) : (
+                                subgroup.members.map((member) => {
+                                  return (
+                                    <View key={`${subgroup.id}-${member.id}`} style={tileWidthStyle}>
+                                      <SquarePersonTile
+                                        name={member.name}
+                                        gender={member.gender}
+                                        registered={member.registered}
+                                        showStatus={showStatusLabels}
+                                        onPress={() => openMember(member.id)}
+                                        compact={compactTiles}
+                                      />
+                                    </View>
+                                  );
+                                })
+                              )}
+                            </View>
+
+                            {subgroupIndex < subgroupBlocks.length - 1 ? <View className="mt-4 h-px bg-gray-200" /> : null}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              ) : null}
             </View>
           </View>
-
-          {subgroupBlocks.length === 0 ? (
-            <View className="rounded-[18px] border border-dashed border-gray-300 bg-white p-6">
-              <Text className="text-center text-gray-500">No groups found</Text>
-            </View>
-          ) : (
-            <View className="gap-3">
-              {subgroupBlocks.map((subgroup, subgroupIndex) => {
-                return (
-                  <View key={subgroup.id} className="rounded-[18px] border border-gray-200 bg-white p-4">
-                    <View className="flex-row items-center gap-3">
-                      <View className="h-12 w-12 items-center justify-center rounded-2xl bg-gray-100">
-                        <Ionicons name="person-circle-outline" size={26} color="#111827" />
-                      </View>
-
-                      <View className="flex-1">
-                        <View className="flex-row items-center justify-between gap-3">
-                          <View className="flex-1">
-                            <Text className="text-[13px] font-bold uppercase tracking-[1px] text-gray-500">Leader</Text>
-                            <Text className="mt-0.5 text-[16px] font-extrabold text-gray-900">
-                              {subgroup.leaderName || "Not set"}
-                            </Text>
-                          </View>
-
-                          <View ref={(node) => { subgroupMenuRefs.current[subgroup.id] = node; }}>
-                            <Pressable
-                              onPress={() => openSubgroupMenu(subgroupIndex)}
-                              className="h-10 w-10 items-center justify-center rounded-full bg-gray-100"
-                            >
-                              <Ionicons name="ellipsis-horizontal" size={22} color="#111827" />
-                            </Pressable>
-                          </View>
-                        </View>
-                      </View>
-                    </View>
-
-                    <View className="my-4 h-px bg-gray-200" />
-
-                    <View className="flex-row flex-wrap justify-between gap-y-3">
-                      {subgroup.members.length === 0 ? (
-                        <Text className="text-gray-500">No members in this subgroup</Text>
-                      ) : (
-                        subgroup.members.map((member) => {
-                          return (
-                            <Pressable
-                              key={`${subgroup.id}-${member.id}`}
-                              onPress={() => openMember(member.id)}
-                              className="w-[48.5%] rounded-[16px] border border-gray-200 bg-[#FAFAFA] p-3"
-                            >
-                              <View className="flex-row items-start gap-3">
-                                <View className="h-11 w-11 items-center justify-center rounded-2xl bg-gray-100">
-                                  <Ionicons name="person" size={20} color="#6B7280" />
-                                </View>
-
-                                <View className="flex-1">
-                                  <Text numberOfLines={2} className="text-[15px] font-extrabold text-gray-900">
-                                    {member.name}
-                                  </Text>
-
-                                  <View className="mt-2 flex-row items-center gap-1.5">
-                                    <Ionicons
-                                      name={member.registered ? "checkmark-circle" : "alert-circle"}
-                                      size={14}
-                                      color={member.registered ? "#16A34A" : "#D97706"}
-                                    />
-                                    <Text className={`text-[12px] font-bold ${member.registered ? "text-emerald-600" : "text-amber-600"}`}>
-                                      {member.registered ? "Registered" : "Unregistered"}
-                                    </Text>
-                                  </View>
-                                </View>
-                              </View>
-                            </Pressable>
-                          );
-                        })
-                      )}
-                    </View>
-
-                    {subgroupIndex < subgroupBlocks.length - 1 ? <View className="mt-4 h-px bg-gray-200" /> : null}
-                  </View>
-                );
-              })}
-            </View>
-          )}
         </View>
       </ScrollView>
 
@@ -1179,14 +993,10 @@ export default function Members() {
 
             <Pressable
               onPress={() => {
-                console.log('Delete button pressed, subgroupMenuTargetIndex:', subgroupMenuTargetIndex);
                 const index = subgroupMenuTargetIndex;
                 closeSubgroupMenu();
                 if (index !== null) {
-                  console.log('Calling deleteSelectedSubgroup with index:', index);
                   deleteSelectedSubgroup(index);
-                } else {
-                  console.log('Index is null, not calling delete');
                 }
               }}
               className="flex-row items-center gap-2.5 px-4 py-3"
@@ -1218,17 +1028,6 @@ export default function Members() {
         selectedLeader={selectedLeader}
         savingAction={savingAction}
         indexToLetters={indexToLetters}
-      />
-
-      <AddDirectMembersModal
-        visible={showAddDirectMembersModal}
-        onClose={closeAddDirectMembersModal}
-        onSave={saveDirectMembers}
-        group={group}
-        directMemberIds={directMemberIds}
-        userMap={userMap}
-        onOpenUserPicker={openUserPicker}
-        savingAction={savingAction}
       />
 
       <AddMembersModal
@@ -1274,6 +1073,6 @@ export default function Members() {
         selectedPickerTitle={selectedPickerTitle}
         pickerSelectedUsers={pickerSelectedUsers}
       />
-    </View>
+    </>
   );
 }

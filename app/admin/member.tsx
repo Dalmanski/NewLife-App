@@ -1,12 +1,34 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams } from "expo-router";
-import { doc, getDoc, Timestamp } from "firebase/firestore";
-import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, ScrollView, Text, View } from "react-native";
+import { collection, doc, getDocs, getDoc, Timestamp } from "firebase/firestore";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { db } from "../../lib/firebaseConfig";
 
-type GroupKind = "ministry" | "coreGroup";
+type TagItem = {
+  name: string;
+  color: string;
+};
+
+type SocialLinkItem = {
+  url: string;
+  platform?: string;
+  host?: string;
+  color?: string;
+  icon?: string;
+};
 
 type MemberData = {
   id: string;
@@ -29,9 +51,33 @@ type MemberData = {
   joinedAt?: Timestamp | string | Date;
   startedAt?: Timestamp | string | Date;
   ministry?: any;
-  coreGroup?: any;
+  tags?: TagItem[];
   subGroup?: any;
+  socialLinks?: SocialLinkItem[];
   [key: string]: any;
+};
+
+const MINISTRY_TAG_COLOR_MAP: Record<string, string> = {
+  gray: "#6B7280",
+  blue: "#2563EB",
+  green: "#10B981",
+  amber: "#F59E0B",
+  red: "#EF4444",
+  purple: "#8B5CF6",
+  pink: "#EC4899",
+  teal: "#14B8A6",
+};
+
+const normalizeMinistryColorTag = (value: unknown) => {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized.match(/^#[0-9A-F]{6}$/)) {
+    return normalized;
+  }
+  const lowerNorm = normalized.toLowerCase();
+  if (MINISTRY_TAG_COLOR_MAP[lowerNorm]) {
+    return MINISTRY_TAG_COLOR_MAP[lowerNorm];
+  }
+  return MINISTRY_TAG_COLOR_MAP.gray;
 };
 
 const getMemberName = (raw: any) => {
@@ -168,6 +214,200 @@ const getGroupDisplay = (value: any) => {
   return String(value);
 };
 
+const normalizeTagList = (value: unknown): TagItem[] => {
+  if (!Array.isArray(value)) return [];
+
+  const result: TagItem[] = [];
+
+  value.forEach((item) => {
+    if (typeof item === "string") {
+      const name = item.trim();
+      if (name) result.push({ name, color: "#64748B" });
+      return;
+    }
+
+    if (item && typeof item === "object") {
+      const raw = item as { name?: unknown; color?: unknown };
+      const name = String(raw.name ?? "").trim();
+      if (!name) return;
+      const color = String(raw.color ?? "#64748B").trim() || "#64748B";
+      result.push({ name, color });
+    }
+  });
+
+  const seen = new Set<string>();
+  return result.filter((tag) => {
+    const key = tag.name.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const normalizeSocialLinks = (value: unknown): SocialLinkItem[] => {
+  if (!Array.isArray(value)) return [];
+
+  const result: SocialLinkItem[] = [];
+  const seen = new Set<string>();
+
+  value.forEach((item) => {
+    let url = "";
+
+    if (typeof item === "string") {
+      url = item.trim();
+    } else if (item && typeof item === "object") {
+      const raw = item as { url?: unknown; link?: unknown; value?: unknown };
+      url = String(raw.url ?? raw.link ?? raw.value ?? "").trim();
+    }
+
+    if (!url) return;
+
+    const key = url.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    result.push({
+      url,
+      ...detectSocialPlatform(url),
+    });
+  });
+
+  return result;
+};
+
+const detectSocialPlatform = (value: string) => {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return {
+      platform: "Website",
+      host: "",
+      color: "#64748B",
+      icon: "link",
+    };
+  }
+
+  let candidate = text;
+  if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `https://${candidate}`;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+
+    if (
+      host.includes("facebook.com") ||
+      host === "fb.com" ||
+      host.endsWith(".fb.com") ||
+      host.includes("fb.me")
+    ) {
+      return { platform: "Facebook", host, color: "#1877F2", icon: "logo-facebook" };
+    }
+
+    if (host.includes("instagram.com")) {
+      return { platform: "Instagram", host, color: "#E1306C", icon: "logo-instagram" };
+    }
+
+    if (host.includes("tiktok.com")) {
+      return { platform: "TikTok", host, color: "#111827", icon: "logo-tiktok" };
+    }
+
+    if (host === "x.com" || host.includes("twitter.com")) {
+      return { platform: "X", host, color: "#111827", icon: "logo-twitter" };
+    }
+
+    if (host.includes("youtube.com") || host === "youtu.be") {
+      return { platform: "YouTube", host, color: "#FF0000", icon: "logo-youtube" };
+    }
+
+    if (host.includes("linkedin.com")) {
+      return { platform: "LinkedIn", host, color: "#0A66C2", icon: "logo-linkedin" };
+    }
+
+    if (host.includes("threads.net")) {
+      return { platform: "Threads", host, color: "#111827", icon: "link" };
+    }
+
+    if (host.includes("github.com")) {
+      return { platform: "GitHub", host, color: "#111827", icon: "logo-github" };
+    }
+
+    if (host.includes("reddit.com")) {
+      return { platform: "Reddit", host, color: "#FF4500", icon: "logo-reddit" };
+    }
+
+    if (host.includes("t.me") || host.includes("telegram.me")) {
+      return { platform: "Telegram", host, color: "#229ED9", icon: "paper-plane" };
+    }
+
+    if (host.includes("wa.me") || host.includes("whatsapp.com")) {
+      return { platform: "WhatsApp", host, color: "#25D366", icon: "logo-whatsapp" };
+    }
+
+    if (host.includes("discord.com")) {
+      return { platform: "Discord", host, color: "#5865F2", icon: "logo-discord" };
+    }
+
+    return {
+      platform: host ? "Website" : "Unknown",
+      host,
+      color: "#64748B",
+      icon: "link",
+    };
+  } catch {
+    return {
+      platform: "Unknown",
+      host: "",
+      color: "#64748B",
+      icon: "link",
+    };
+  }
+};
+
+const openExternalUrl = async (rawUrl: string) => {
+  const text = String(rawUrl ?? "").trim();
+  if (!text) return;
+
+  let url = text;
+  if (!/^https?:\/\//i.test(url) && !/^sip:/i.test(url) && !/^callto:/i.test(url)) {
+    url = `https://${url}`;
+  }
+
+  if (Platform.OS === "web") {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  const canOpen = await Linking.canOpenURL(url);
+  if (canOpen) {
+    await Linking.openURL(url);
+  } else {
+    Alert.alert("Error", "Cannot open this link");
+  }
+};
+
+const openPhoneByPlatform = async (value: string) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return;
+
+  const digits = raw.replace(/[^\d]/g, "");
+  if (!digits) return;
+
+  if (Platform.OS === "web") {
+    const url = `https://teams.microsoft.com/l/call/0/0?users=4:${digits}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  const url = `tel:${digits}`;
+  const canOpen = await Linking.canOpenURL(url);
+  if (canOpen) {
+    await Linking.openURL(url);
+  } else {
+    Alert.alert("Error", "Cannot open dialer");
+  }
+};
+
 function InfoRow({ label, value }: { label: string; value: any }) {
   const finalValue = formatValue(value);
   if (!finalValue || finalValue === "—") return null;
@@ -201,18 +441,86 @@ function SectionCard({
   );
 }
 
-export default function Member(props?: { memberId?: string; groupId?: string; groupKind?: string; groupName?: string }) {
+function SocialButton({ item }: { item: SocialLinkItem }) {
+  const iconName = String(item.icon ?? "link") as any;
+  const color = item.color || "#64748B";
+
+  return (
+    <Pressable
+      onPress={() => openExternalUrl(item.url)}
+      className="h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white"
+      style={({ pressed }) =>
+        pressed ? { opacity: 0.85, transform: [{ scale: 0.96 }] } : undefined
+      }
+    >
+      <Ionicons name={iconName} size={18} color={color} />
+    </Pressable>
+  );
+}
+
+export default function Member(props?: {
+  memberId?: string;
+  groupId?: string;
+  ministry?: string;
+  groupName?: string;
+  viewerRole?: string;
+  accountRole?: string;
+}) {
   const params = useLocalSearchParams<{
     memberId?: string;
     groupId?: string;
-    groupKind?: string;
+    ministry?: string;
     groupName?: string;
+    hideRoleAndMinistries?: string;
+    viewerRole?: string;
+    accountRole?: string;
+    role?: string;
   }>();
 
   const memberId = String(params.memberId ?? props?.memberId ?? "");
-  const groupId = String(params.groupId ?? props?.groupId ?? "");
-  const groupKind = String(params.groupKind ?? props?.groupKind ?? "") as GroupKind;
-  const groupName = String(params.groupName ?? props?.groupName ?? "");
+  const ministryParam = String(params.ministry ?? props?.ministry ?? "");
+  const hideRoleAndMinistries = String(params.hideRoleAndMinistries ?? "false") === "true";
+
+  const [viewerRole, setViewerRole] = useState("");
+
+  useEffect(() => {
+    const loadViewerRole = async () => {
+      try {
+        const paramsRole = String(
+          params.viewerRole ?? params.accountRole ?? params.role ?? props?.viewerRole ?? props?.accountRole ?? ""
+        )
+          .trim()
+          .toLowerCase();
+
+        if (paramsRole) {
+          setViewerRole(paramsRole);
+          return;
+        }
+
+        const storedRole = await AsyncStorage.getItem("userRole");
+        if (storedRole) {
+          setViewerRole(String(storedRole).trim().toLowerCase());
+        }
+      } catch (error) {
+        console.error("Failed to load viewer role:", error);
+      }
+    };
+
+    loadViewerRole();
+  }, [params, props?.viewerRole, props?.accountRole]);
+
+  const canViewStatus = viewerRole === "admin";
+
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const isWeb = Platform.OS === "web";
+  const isAndroid = Platform.OS === "android";
+  const useDesktopHeaderLayout = isWeb && isLandscape;
+  const useMobileHeaderLayout = !useDesktopHeaderLayout;
+
+  const contentMaxWidth = useDesktopHeaderLayout ? 980 : undefined;
+  const outerHorizontalPadding = useDesktopHeaderLayout ? 24 : 0;
+  const innerHorizontalPadding = useDesktopHeaderLayout ? 24 : 16;
 
   const [loading, setLoading] = useState(true);
   const [member, setMember] = useState<MemberData | null>(null);
@@ -234,6 +542,44 @@ export default function Member(props?: { memberId?: string; groupId?: string; gr
       }
 
       const raw = snap.data() as any;
+      const ministryValue = raw?.subGroup?.ministry ?? raw?.ministry ?? null;
+      const ministryNames = Array.isArray(ministryValue)
+        ? ministryValue.map((x) => String(x).trim()).filter(Boolean)
+        : ministryValue
+          ? [String(ministryValue).trim()]
+          : [];
+
+      const ministryColorMap = new Map<string, string>();
+      if (ministryNames.length > 0) {
+        const ministrySnap = await getDocs(collection(db, "ministries"));
+        ministrySnap.docs.forEach((docSnap) => {
+          const data = docSnap.data() as any;
+          const ministryName = String(data?.name ?? "").trim();
+          const colorTag = data?.colorTag ?? data?.tagColor ?? "#6B7280";
+          if (ministryName) {
+            ministryColorMap.set(ministryName.toLowerCase(), colorTag);
+          }
+        });
+      }
+
+      const tagsFromMinistry = ministryNames.map((name) => ({
+        name,
+        color: normalizeMinistryColorTag(
+          ministryColorMap.get(name.toLowerCase()) ?? "#6B7280"
+        ),
+      }));
+      const existingTags = normalizeTagList(raw?.tags);
+
+      const seen = new Set(existingTags.map((tag) => tag.name.trim().toLowerCase()));
+      const mergedTags = [
+        ...tagsFromMinistry.filter((tag) => {
+          const key = tag.name.trim().toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }),
+        ...existingTags,
+      ];
 
       setMember({
         ...raw,
@@ -256,9 +602,10 @@ export default function Member(props?: { memberId?: string; groupId?: string; gr
         updatedAt: raw?.updatedAt,
         joinedAt: raw?.joinedAt,
         startedAt: raw?.startedAt,
-        ministry: raw?.subGroup?.ministry ?? raw?.ministry ?? null,
-        coreGroup: raw?.subGroup?.coreGroup ?? raw?.coreGroup ?? null,
+        ministry: ministryValue,
+        tags: mergedTags,
         subGroup: raw?.subGroup ?? null,
+        socialLinks: normalizeSocialLinks(raw?.socialLinks ?? raw?.socials ?? raw?.links ?? []),
       });
     } catch (error) {
       Alert.alert("Error", `Failed to load member\n${getErrorMessage(error)}`);
@@ -307,12 +654,12 @@ export default function Member(props?: { memberId?: string; groupId?: string; gr
   }, [member]);
 
   const ministryDisplay = useMemo(() => {
-    return getGroupDisplay(member?.subGroup?.ministry ?? member?.ministry);
-  }, [member]);
+    return getGroupDisplay(member?.subGroup?.ministry ?? member?.ministry ?? ministryParam);
+  }, [member, ministryParam]);
 
-  const coreGroupDisplay = useMemo(() => {
-    return getGroupDisplay(member?.subGroup?.coreGroup ?? member?.coreGroup);
-  }, [member]);
+  const displayTags = member?.tags ?? [];
+  const displaySocialLinks = member?.socialLinks ?? [];
+  const contactValue = String(member?.contact ?? member?.phone ?? "").trim();
 
   const identityRows = useMemo(() => {
     if (!member) return [];
@@ -321,7 +668,6 @@ export default function Member(props?: { memberId?: string; groupId?: string; gr
       { label: "Last Name", value: member.lastName },
       { label: "Name", value: member.name },
       { label: "Username", value: member.username },
-      { label: "Role", value: member.role },
       { label: "Civil Status", value: member.civilStatus },
       { label: "Gender", value: member.gender },
       { label: "Birth Date", value: member.birthDate },
@@ -330,11 +676,9 @@ export default function Member(props?: { memberId?: string; groupId?: string; gr
 
   const groupRows = useMemo(() => {
     if (!member) return [];
-    return [
-      { label: "Ministry", value: ministryDisplay },
-      { label: "Core Group", value: coreGroupDisplay },
-    ];
-  }, [member, ministryDisplay, coreGroupDisplay]);
+    if (hideRoleAndMinistries) return [];
+    return [{ label: "Ministry", value: ministryDisplay }];
+  }, [member, ministryDisplay, hideRoleAndMinistries]);
 
   const systemRows = useMemo(() => {
     if (!member) return [];
@@ -345,6 +689,184 @@ export default function Member(props?: { memberId?: string; groupId?: string; gr
       { label: "Member ID", value: member.id },
     ];
   }, [member, startedSource]);
+
+  const renderDesktopHeader = () => (
+    <View className="rounded-[24px] border border-gray-200 bg-white p-4 shadow-sm">
+      <View className="flex-row items-start gap-4">
+        <View className="h-[92px] w-[92px] items-center justify-center rounded-[28px] bg-gray-900">
+          <Ionicons name="person" size={44} color="white" />
+        </View>
+
+        <View className="flex-1">
+          <View className="flex-row items-start justify-between gap-4">
+            <View className="flex-1">
+              <Text className="text-[22px] font-extrabold leading-7 text-gray-900">
+                {member?.fullName || member?.name}
+              </Text>
+
+              {displayTags.length ? (
+                <View className="mt-2 flex-row flex-wrap gap-2">
+                  {displayTags.map((tag, index) => (
+                    <View
+                      key={`${tag.name}-${index}`}
+                      className="flex-row items-center gap-2 rounded-full px-3 py-1.5"
+                      style={{
+                        backgroundColor: `${tag.color || "#64748B"}20`,
+                        borderWidth: 1,
+                        borderColor: tag.color || "#64748B",
+                      }}
+                    >
+                      <View
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={{ backgroundColor: tag.color || "#64748B" }}
+                      />
+                      <Text
+                        className="text-[12px] font-bold"
+                        style={{ color: tag.color || "#64748B" }}
+                      >
+                        {tag.name}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              {canViewStatus ? (
+                <View className={`mt-2 self-start rounded-full border px-3 py-2 ${statusStyle.container}`}>
+                  <View className="flex-row items-center gap-2">
+                    <View className={`h-2.5 w-2.5 rounded-full ${statusStyle.dot}`} />
+                    <Text className={`text-[12px] font-bold ${statusStyle.text}`}>
+                      {statusLabel}
+                    </Text>
+                    <Text className={`mt-0.5 text-[11px] font-semibold ${statusStyle.text}`}>
+                      {timeAgo(startedSource)}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+            </View>
+
+            <View className="items-end gap-2">
+              <View className="flex-row flex-wrap justify-end gap-2">
+                {displaySocialLinks.length
+                  ? displaySocialLinks.map((item, index) => (
+                      <SocialButton key={`${item.url}-${index}`} item={item} />
+                    ))
+                  : null}
+              </View>
+
+              {contactValue ? (
+                <Pressable
+                  onPress={() => openPhoneByPlatform(contactValue)}
+                  className="flex-row items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2"
+                  style={({ pressed }) =>
+                    pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+                  }
+                >
+                  <Ionicons name="call" size={16} color="#2563EB" />
+                  <Text className="text-[13px] font-bold text-gray-900">{contactValue}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderMobileHeader = () => (
+    <View className="rounded-[24px] border border-gray-200 bg-white p-4 shadow-sm">
+      <View className="items-center">
+        <View className="h-[92px] w-[92px] items-center justify-center rounded-[28px] bg-gray-900">
+          <Ionicons name="person" size={44} color="white" />
+        </View>
+
+        <Text className="mt-4 text-center text-[22px] font-extrabold leading-7 text-gray-900">
+          {member?.fullName || member?.name}
+        </Text>
+      </View>
+
+      <View className="mt-4 flex-row gap-3">
+        <View className="flex-1 rounded-[18px] border border-gray-200 bg-gray-50 px-3 py-3">
+          <Text className="text-[11px] font-extrabold uppercase tracking-[1px] text-gray-500">
+            Tags / Status
+          </Text>
+
+          {displayTags.length ? (
+            <View className="mt-3 flex-row flex-wrap gap-2">
+              {displayTags.map((tag, index) => (
+                <View
+                  key={`${tag.name}-${index}`}
+                  className="flex-row items-center gap-2 rounded-full px-3 py-1.5"
+                  style={{
+                    backgroundColor: `${tag.color || "#64748B"}20`,
+                    borderWidth: 1,
+                    borderColor: tag.color || "#64748B",
+                  }}
+                >
+                  <View
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: tag.color || "#64748B" }}
+                  />
+                  <Text
+                    className="text-[12px] font-bold"
+                    style={{ color: tag.color || "#64748B" }}
+                  >
+                    {tag.name}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text className="mt-3 text-[13px] font-semibold text-gray-400">—</Text>
+          )}
+
+          {canViewStatus ? (
+            <View className={`mt-3 self-start rounded-full border px-3 py-2 ${statusStyle.container}`}>
+              <View className="flex-row items-center gap-2">
+                <View className={`h-2.5 w-2.5 rounded-full ${statusStyle.dot}`} />
+                <Text className={`text-[12px] font-bold ${statusStyle.text}`}>
+                  {statusLabel}
+                </Text>
+                <Text className={`mt-0.5 text-[11px] font-semibold ${statusStyle.text}`}>
+                  {timeAgo(startedSource)}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+        </View>
+
+        <View className="flex-1 rounded-[18px] border border-gray-200 bg-gray-50 px-3 py-3">
+          <Text className="text-[11px] font-extrabold uppercase tracking-[1px] text-gray-500">
+            Links / Phone
+          </Text>
+
+          <View className="mt-3 flex-row flex-wrap gap-2">
+            {displaySocialLinks.length ? (
+              displaySocialLinks.map((item, index) => (
+                <SocialButton key={`${item.url}-${index}`} item={item} />
+              ))
+            ) : (
+              <Text className="text-[13px] font-semibold text-gray-400">—</Text>
+            )}
+          </View>
+
+          {contactValue ? (
+            <Pressable
+              onPress={() => openPhoneByPlatform(contactValue)}
+              className="mt-3 flex-row items-center justify-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-3"
+              style={({ pressed }) =>
+                pressed ? { opacity: 0.85, transform: [{ scale: 0.98 }] } : undefined
+              }
+            >
+              <Ionicons name="call" size={16} color="#2563EB" />
+              <Text className="text-[13px] font-bold text-gray-900">{contactValue}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
 
   if (loading) {
     return (
@@ -372,63 +894,43 @@ export default function Member(props?: { memberId?: string; groupId?: string; gr
     <View className="flex-1 bg-[#F7F8FA]">
       <ScrollView
         className="flex-1"
-        contentContainerClassName="px-5 pt-5 pb-[110px]"
+        contentContainerStyle={{
+          paddingHorizontal: outerHorizontalPadding,
+          paddingTop: 20,
+          paddingBottom: 110,
+          alignItems: "center",
+        }}
         showsVerticalScrollIndicator={false}
       >
-        <View className="rounded-[24px] border border-gray-200 bg-white p-4 shadow-sm">
-          <View className="flex-row items-start gap-4">
-            <View className="h-[92px] w-[92px] items-center justify-center rounded-[28px] bg-gray-900">
-              <Ionicons name="person" size={44} color="white" />
-            </View>
+        <View
+          style={{
+            width: "100%",
+            maxWidth: contentMaxWidth,
+            paddingHorizontal: innerHorizontalPadding,
+          }}
+        >
+          {useDesktopHeaderLayout ? renderDesktopHeader() : renderMobileHeader()}
 
-            <View className="flex-1">
-              <Text className="text-[12px] font-bold uppercase tracking-[1px] text-gray-500">
-                PROFILE
-              </Text>
-              <Text className="mt-1 text-[22px] font-extrabold leading-7 text-gray-900">
-                {member.fullName || member.name}
-              </Text>
+          {groupRows.length > 0 && (
+            <SectionCard title="Group Assignment">
+              {groupRows.map((row) => (
+                <InfoRow key={row.label} label={row.label} value={row.value} />
+              ))}
+            </SectionCard>
+          )}
 
-              <View className="mt-1 flex-row items-center gap-2">
-                {!!member.role && (
-                  <Text className="text-[14px] font-semibold text-gray-500">
-                    {member.role}
-                  </Text>
-                )}
+          <SectionCard title="Basic Information">
+            {identityRows.map((row) => (
+              <InfoRow key={row.label} label={row.label} value={row.value} />
+            ))}
+          </SectionCard>
 
-                <View className={`rounded-full border px-3 py-2 ${statusStyle.container}`}>
-                  <View className="flex-row items-center gap-2">
-                    <View className={`h-2.5 w-2.5 rounded-full ${statusStyle.dot}`} />
-                    <Text className={`text-[12px] font-bold ${statusStyle.text}`}>
-                      {statusLabel}
-                    </Text>
-                    <Text className={`mt-0.5 text-[11px] font-semibold ${statusStyle.text}`}>
-                      {timeAgo(startedSource)}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          </View>
+          <SectionCard title="System Information">
+            {systemRows.map((row) => (
+              <InfoRow key={row.label} label={row.label} value={row.value} />
+            ))}
+          </SectionCard>
         </View>
-
-        <SectionCard title="Group Assignment">
-          {groupRows.map((row) => (
-            <InfoRow key={row.label} label={row.label} value={row.value} />
-          ))}
-        </SectionCard>
-
-        <SectionCard title="Basic Information">
-          {identityRows.map((row) => (
-            <InfoRow key={row.label} label={row.label} value={row.value} />
-          ))}
-        </SectionCard>
-
-        <SectionCard title="System Information">
-          {systemRows.map((row) => (
-            <InfoRow key={row.label} label={row.label} value={row.value} />
-          ))}
-        </SectionCard>
       </ScrollView>
     </View>
   );

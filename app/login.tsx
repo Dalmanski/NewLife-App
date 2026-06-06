@@ -11,6 +11,7 @@ import {
   Platform,
   ScrollView,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -37,6 +38,9 @@ const theme = {
 
 function LoginScreenContent() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const containerWidth = isLandscape ? Math.min(460, width - 40) : "100%";
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -129,6 +133,7 @@ function LoginScreenContent() {
             justifyContent: "center",
             paddingHorizontal: 20,
             paddingVertical: 24,
+            alignItems: "center",
           }}
         >
           <View
@@ -168,129 +173,132 @@ function LoginScreenContent() {
             }}
           />
 
-          <Card
-            mode="elevated"
-            style={{
-              borderRadius: 28,
-              backgroundColor: "#FFFFFF",
-              padding: 8,
-            }}
-          >
-            <Card.Content style={{ padding: 18 }}>
-              <View style={{ alignItems: "center", marginBottom: 18 }}>
-                <View
-                  style={{
-                    width: 96,
-                    height: 96,
-                    borderRadius: 28,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    backgroundColor: "#F3F7FF",
-                    marginBottom: 14,
-                  }}
-                >
-                  <Image
-                    source={require("../assets/images/NL-icon.jpg")}
-                    style={{ width: 86, height: 86 }}
-                    resizeMode="contain"
-                  />
+          <View style={{ width: containerWidth }}>
+            <Card
+              mode="elevated"
+              style={{
+                borderRadius: 28,
+                backgroundColor: "#FFFFFF",
+                padding: 8,
+                width: "100%",
+              }}
+            >
+              <Card.Content style={{ padding: 18 }}>
+                <View style={{ alignItems: "center", marginBottom: 18 }}>
+                  <View
+                    style={{
+                      width: 96,
+                      height: 96,
+                      borderRadius: 28,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: "#F3F7FF",
+                      marginBottom: 14,
+                    }}
+                  >
+                    <Image
+                      source={require("../assets/images/NL-icon.jpg")}
+                      style={{ width: 86, height: 86 }}
+                      resizeMode="contain"
+                    />
+                  </View>
+
+                  <Text
+                    variant="headlineMedium"
+                    style={{
+                      fontWeight: "800",
+                      color: "#0F172A",
+                    }}
+                  >
+                    Welcome Back
+                  </Text>
+
+                  <Text
+                    variant="bodyMedium"
+                    style={{
+                      marginTop: 6,
+                      textAlign: "center",
+                      color: "#64748B",
+                    }}
+                  >
+                    Sign in to continue to the NewLife Danao App
+                  </Text>
                 </View>
 
-                <Text
-                  variant="headlineMedium"
-                  style={{
-                    fontWeight: "800",
-                    color: "#0F172A",
-                  }}
-                >
-                  Welcome Back
-                </Text>
+                <View style={{ gap: 14 }}>
+                  <TextInput
+                    mode="outlined"
+                    label="Nickname"
+                    value={name}
+                    onChangeText={setName}
+                    left={<TextInput.Icon icon="account-outline" />}
+                    dense
+                    outlineStyle={{ borderRadius: 16 }}
+                    contentStyle={{ paddingVertical: 12 }}
+                    style={{ backgroundColor: "#F9FBFD" }}
+                    activeOutlineColor="#2563EB"
+                    outlineColor="#D7DEE8"
+                    textColor="#0F172A"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="off"
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => passwordInputRef.current?.focus()}
+                  />
 
-                <Text
-                  variant="bodyMedium"
-                  style={{
-                    marginTop: 6,
-                    textAlign: "center",
-                    color: "#64748B",
-                  }}
-                >
-                  Sign in to continue to the NewLife Danao App
-                </Text>
-              </View>
+                  <TextInput
+                    ref={passwordInputRef}
+                    mode="outlined"
+                    label="Password"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    left={<TextInput.Icon icon="lock-outline" />}
+                    right={
+                      <TextInput.Icon
+                        icon={showPassword ? "eye-off-outline" : "eye-outline"}
+                        onPress={() => setShowPassword((prev) => !prev)}
+                      />
+                    }
+                    dense
+                    outlineStyle={{ borderRadius: 16 }}
+                    contentStyle={{ paddingVertical: 12 }}
+                    style={{ backgroundColor: "#F9FBFD" }}
+                    activeOutlineColor="#2563EB"
+                    outlineColor="#D7DEE8"
+                    textColor="#0F172A"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="off"
+                    returnKeyType="done"
+                    onSubmitEditing={handleLogin}
+                  />
 
-              <View style={{ gap: 14 }}>
-                <TextInput
-                  mode="outlined"
-                  label="Nickname"
-                  value={name}
-                  onChangeText={setName}
-                  left={<TextInput.Icon icon="account-outline" />}
-                  dense
-                  outlineStyle={{ borderRadius: 16 }}
-                  contentStyle={{ paddingVertical: 12 }}
-                  style={{ backgroundColor: "#F9FBFD" }}
-                  activeOutlineColor="#2563EB"
-                  outlineColor="#D7DEE8"
-                  textColor="#0F172A"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="off"
-                  returnKeyType="next"
-                  blurOnSubmit={false}
-                  onSubmitEditing={() => passwordInputRef.current?.focus()}
-                />
-
-                <TextInput
-                  ref={passwordInputRef}
-                  mode="outlined"
-                  label="Password"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  left={<TextInput.Icon icon="lock-outline" />}
-                  right={
-                    <TextInput.Icon
-                      icon={showPassword ? "eye-off-outline" : "eye-outline"}
-                      onPress={() => setShowPassword((prev) => !prev)}
-                    />
-                  }
-                  dense
-                  outlineStyle={{ borderRadius: 16 }}
-                  contentStyle={{ paddingVertical: 12 }}
-                  style={{ backgroundColor: "#F9FBFD" }}
-                  activeOutlineColor="#2563EB"
-                  outlineColor="#D7DEE8"
-                  textColor="#0F172A"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="off"
-                  returnKeyType="done"
-                  onSubmitEditing={handleLogin}
-                />
-
-                <Button
-                  mode="contained"
-                  onPress={handleLogin}
-                  disabled={loading}
-                  contentStyle={{ height: 54 }}
-                  labelStyle={{ fontSize: 16, fontWeight: "800" }}
-                  style={{
-                    borderRadius: 16,
-                    marginTop: 4,
-                  }}
-                  icon={({ size, color }) =>
-                    loading ? (
-                      <ActivityIndicator animating size="small" color={color} />
-                    ) : (
-                      <Ionicons name="log-in-outline" size={size} color={color} />
-                    )
-                  }
-                >
-                  {loading ? "Logging in..." : "Login"}
-                </Button>
-              </View>
-            </Card.Content>
-          </Card>
+                  <Button
+                    mode="contained"
+                    onPress={handleLogin}
+                    disabled={loading}
+                    contentStyle={{ height: 54 }}
+                    labelStyle={{ fontSize: 16, fontWeight: "800" }}
+                    style={{
+                      borderRadius: 16,
+                      marginTop: 4,
+                    }}
+                    icon={({ size, color }) =>
+                      loading ? (
+                        <ActivityIndicator animating size="small" color={color} />
+                      ) : (
+                        <Ionicons name="log-in-outline" size={size} color={color} />
+                      )
+                    }
+                  >
+                    {loading ? "Logging in..." : "Login"}
+                  </Button>
+                </View>
+              </Card.Content>
+            </Card>
+          </View>
 
           <Text
             variant="bodySmall"

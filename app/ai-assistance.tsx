@@ -27,9 +27,9 @@ const GREETING_PROMPT_TEMPLATE = `Please greet {name} and provide a brief overvi
 
 const INSTRUCTION_SUFFIX = `IMPORTANT: Keep responses concise and brief (1-3 sentences), use easy words unless the user asks for detailed explanation or complex analysis. Be direct and helpful. Use easy words.`
 
-const COLLECTION_NAMES = ['groups', 'users', 'tasks', 'events', 'coreGroups', 'ministies']
+const COLLECTION_NAMES = ['groups', 'users', 'tasks', 'events', 'ministries']
 
-const QUICK_PROMPTS = ['Unsa akong task?', 'Unsay upcoming event?', 'Unsaon nako pagamit ning apps?']
+const QUICK_PROMPTS = ["What's my task?", "What's the upcoming event?", "What can I use the app for?"]
 
 let systemInstruction = ''
 
