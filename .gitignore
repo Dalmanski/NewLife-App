@@ -91,3 +91,9 @@ yarn-error.*
 .env
 /app/Gemini Model/secret-key.json
 Test/client_secret_858420307197-iuta76no4u6vklkakugfdnsj01pdbunp.apps.googleusercontent.com.json
+
+# Sensitive credential files
+Test/credentials.json
+google-services.json
+Test/*.json
+app/Gemini\ Model/secret-key.json
